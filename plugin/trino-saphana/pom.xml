@@ -16,6 +16,12 @@
         <air.main.basedir>${project.parent.basedir}</air.main.basedir>
     </properties>
 
+    <dependency>
+        <groupId>com.sap.cloud.db.jdbc</groupId>
+        <artifactId>ngdbc</artifactId>
+        <version>2.16.14</version>
+    </dependency>
+    
     <dependencies>
         <dependency>
             <groupId>com.google.inject</groupId>
