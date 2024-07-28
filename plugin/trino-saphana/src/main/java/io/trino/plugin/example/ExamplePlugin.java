@@ -11,16 +11,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.saphana;
+package io.trino.plugin.example;
 
 import io.trino.plugin.jdbc.JdbcPlugin;
 
-
-public class SapHanaPlugin
+public class ExamplePlugin
         extends JdbcPlugin
 {
-    public SapHanaPlugin()
+    public ExamplePlugin()
     {
-        super("saphana", new SapHanaClientModule());
+        super("example_jdbc", new ExampleClientModule());
     }
 }

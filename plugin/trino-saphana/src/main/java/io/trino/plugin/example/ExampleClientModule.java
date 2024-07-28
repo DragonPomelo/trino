@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.saphana;
+package io.trino.plugin.example;
 
 import com.google.inject.Binder;
 import com.google.inject.Provides;
@@ -24,46 +24,31 @@ import io.trino.plugin.jdbc.ConnectionFactory;
 import io.trino.plugin.jdbc.DriverConnectionFactory;
 import io.trino.plugin.jdbc.ForBaseJdbc;
 import io.trino.plugin.jdbc.JdbcClient;
-import io.trino.plugin.jdbc.JdbcMetadataConfig;
-import io.trino.plugin.jdbc.JdbcStatisticsConfig;
-import io.trino.plugin.jdbc.TimestampTimeZoneDomain;
 import io.trino.plugin.jdbc.credential.CredentialProvider;
-import io.trino.plugin.jdbc.ptf.Query;
-import io.trino.spi.function.table.ConnectorTableFunction;
 
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Properties;
 
-import static com.google.inject.multibindings.Multibinder.newSetBinder;
-import static com.google.inject.multibindings.OptionalBinder.newOptionalBinder;
-import static io.airlift.configuration.ConfigBinder.configBinder;
-
-public class SapHanaClientModule
+public class ExampleClientModule
         extends AbstractConfigurationAwareModule
 {
     @Override
-    protected void setup(Binder binder)
+    public void setup(Binder binder)
     {
-        binder.bind(JdbcClient.class).annotatedWith(ForBaseJdbc.class).to(SapHanaClient.class).in(Scopes.SINGLETON);
-        configBinder(binder).bindConfigDefaults(JdbcMetadataConfig.class, config -> config.setBulkListColumns(true));
-        newOptionalBinder(binder, TimestampTimeZoneDomain.class).setBinding().toInstance(TimestampTimeZoneDomain.UTC_ONLY);
-        configBinder(binder).bindConfig(SapHanaConfig.class);
-        configBinder(binder).bindConfig(JdbcStatisticsConfig.class);
-        newSetBinder(binder, ConnectorTableFunction.class).addBinding().toProvider(Query.class).in(Scopes.SINGLETON);
+        binder.bind(JdbcClient.class).annotatedWith(ForBaseJdbc.class).to(ExampleClient.class).in(Scopes.SINGLETON);
     }
 
     @Provides
     @Singleton
     @ForBaseJdbc
-    public static ConnectionFactory createConnectionFactory(BaseJdbcConfig config, CredentialProvider credentialProvider, SapHanaConfig sapHanaConfig   , OpenTelemetry openTelemetry)
+    public static ConnectionFactory getConnectionFactory(BaseJdbcConfig config, CredentialProvider credentialProvider, OpenTelemetry openTelemetry)
             throws SQLException
     {
+        Properties connectionProperties = new Properties();
         return DriverConnectionFactory.builder(DriverManager.getDriver(config.getConnectionUrl()), config.getConnectionUrl(), credentialProvider)
-                .setConnectionProperties(new Properties())
+                .setConnectionProperties(connectionProperties)
                 .setOpenTelemetry(openTelemetry)
                 .build();
     }
-
-
 }
