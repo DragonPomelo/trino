@@ -8,7 +8,7 @@
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
-    <artifactId>trino-example-jdbc</artifactId>
+    <artifactId>trino-saphana</artifactId>
     <packaging>trino-plugin</packaging>
     <description>Trino - Example JDBC connector</description>
 
@@ -153,4 +153,14 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>com.commsen.maven</groupId>
+                <artifactId>bom-helper-maven-plugin</artifactId>
+                <version>0.2.0</version>
+            </plugin>
+        </plugins>
+    </build>
 </project>

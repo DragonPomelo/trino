@@ -372,6 +372,7 @@ jobs:
             !:trino-redis,
             !:trino-redshift,
             !:trino-resource-group-managers,
+            !:trino-saphana
             !:trino-server,
             !:trino-server-rpm,
             !:trino-singlestore,
@@ -478,6 +479,7 @@ jobs:
             - { modules: plugin/trino-redshift, profile: cloud-tests }
             - { modules: plugin/trino-redshift, profile: fte-tests }
             - { modules: plugin/trino-resource-group-managers }
+            - { modules: plugin/trino-saphana }
             - { modules: plugin/trino-singlestore }
             - { modules: plugin/trino-snowflake }
             - { modules: plugin/trino-snowflake, profile: cloud-tests }
