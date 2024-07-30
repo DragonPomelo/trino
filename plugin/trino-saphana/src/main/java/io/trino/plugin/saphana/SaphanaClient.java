@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.example;
+package io.trino.plugin.saphana;
 
 import com.google.inject.Inject;
 import io.trino.plugin.base.mapping.IdentifierMapping;
@@ -32,6 +32,7 @@ import io.trino.spi.type.VarcharType;
 import java.sql.Connection;
 import java.sql.Types;
 import java.util.Optional;
+//import com.sap.cloud.db.jdbc;
 
 import static io.trino.plugin.jdbc.PredicatePushdownController.DISABLE_PUSHDOWN;
 import static io.trino.plugin.jdbc.StandardColumnMappings.bigintColumnMapping;
@@ -60,11 +61,11 @@ import static io.trino.spi.type.SmallintType.SMALLINT;
 import static io.trino.spi.type.VarcharType.createUnboundedVarcharType;
 import static io.trino.spi.type.VarcharType.createVarcharType;
 
-public class ExampleClient
+public class SaphanaClient
         extends BaseJdbcClient
 {
     @Inject
-    public ExampleClient(
+    public SaphanaClient(
             BaseJdbcConfig config,
             ConnectionFactory connectionFactory,
             QueryBuilder queryBuilder,

@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.example;
+package io.trino.plugin.saphana;
 
 import com.google.inject.Binder;
 import com.google.inject.Provides;
@@ -30,13 +30,13 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Properties;
 
-public class ExampleClientModule
+public class SaphanaClientModule
         extends AbstractConfigurationAwareModule
 {
     @Override
     public void setup(Binder binder)
     {
-        binder.bind(JdbcClient.class).annotatedWith(ForBaseJdbc.class).to(ExampleClient.class).in(Scopes.SINGLETON);
+        binder.bind(JdbcClient.class).annotatedWith(ForBaseJdbc.class).to(SaphanaClient.class).in(Scopes.SINGLETON);
     }
 
     @Provides
