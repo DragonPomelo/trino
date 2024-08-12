@@ -66,7 +66,7 @@ public final class ExampleQueryRunner
             DistributedQueryRunner queryRunner = super.build();
             try {
                 queryRunner.installPlugin(new SaphanaPlugin());
-                queryRunner.createCatalog("example", "example_jdbc", connectorProperties);
+                queryRunner.createCatalog("example", "saphana", connectorProperties);
                 return queryRunner;
             }
             catch (Throwable e) {
@@ -80,7 +80,7 @@ public final class ExampleQueryRunner
             throws Exception
     {
         Logging logger = Logging.initialize();
-        logger.setLevel("io.trino.plugin.example_jdbc", Level.DEBUG);
+        logger.setLevel("io.trino.plugin.saphana", Level.DEBUG);
         logger.setLevel("io.trino", Level.INFO);
 
         QueryRunner queryRunner = builder()
