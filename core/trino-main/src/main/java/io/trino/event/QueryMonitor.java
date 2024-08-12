@@ -301,10 +301,6 @@ public class QueryMonitor
     private QueryStatistics createQueryStatistics(QueryInfo queryInfo)
     {
         List<OperatorStats> operatorStats = queryInfo.getQueryStats().getOperatorSummaries();
-        ImmutableList.Builder<String> operatorSummaries = ImmutableList.builderWithExpectedSize(operatorStats.size());
-        for (OperatorStats summary : operatorStats) {
-            operatorSummaries.add(operatorStatsCodec.toJson(summary));
-        }
 
         Optional<StatsAndCosts> planNodeStatsAndCosts = queryInfo.getOutputStage().map(StatsAndCosts::create);
         Optional<String> serializedPlanNodeStatsAndCosts = planNodeStatsAndCosts.map(statsAndCostsCodec::toJson);
@@ -828,6 +824,7 @@ public class QueryMonitor
             lastEndTimeScaledDistribution = DoubleSymmetricDistribution.ZERO;
             endTimeScaledDistribution = DoubleSymmetricDistribution.ZERO;
         }
+        DistributionSnapshot getSplitDistribution = stageInfo.getStageStats().getGetSplitDistribution();
         return new StageTaskStatistics(
                 stageInfo.getStageId().getId(),
                 stageInfo.getTasks().size(),
@@ -853,7 +850,21 @@ public class QueryMonitor
                 lastStartTimeScaledDistribution,
                 terminatingStartTimeScaledDistribution,
                 lastEndTimeScaledDistribution,
-                endTimeScaledDistribution);
+                endTimeScaledDistribution,
+                new DoubleSymmetricDistribution(
+                        getSplitDistribution.getP01(),
+                        getSplitDistribution.getP05(),
+                        getSplitDistribution.getP10(),
+                        getSplitDistribution.getP25(),
+                        getSplitDistribution.getP50(),
+                        getSplitDistribution.getP75(),
+                        getSplitDistribution.getP90(),
+                        getSplitDistribution.getP95(),
+                        getSplitDistribution.getP99(),
+                        getSplitDistribution.getMin(),
+                        getSplitDistribution.getMax(),
+                        getSplitDistribution.getTotal(),
+                        getSplitDistribution.getCount()));
     }
 
     private static LongDistribution getTasksDistribution(StageInfo stageInfo, Function<TaskInfo, Optional<Long>> metricFunction)

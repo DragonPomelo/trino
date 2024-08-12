@@ -74,6 +74,7 @@ import io.trino.plugin.jdbc.expression.RewriteIn;
 import io.trino.plugin.jdbc.logging.RemoteQueryModifier;
 import io.trino.plugin.postgresql.PostgreSqlConfig.ArrayMapping;
 import io.trino.plugin.postgresql.rule.RewriteStringReverseFunction;
+import io.trino.plugin.postgresql.rule.RewriteVectorDistanceFunction;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
 import io.trino.spi.block.BlockBuilder;
@@ -282,6 +283,7 @@ public class PostgreSqlClient
     private final ConnectorExpressionRewriter<ParameterizedExpression> connectorExpressionRewriter;
     private final ProjectFunctionRewriter<JdbcExpression, ParameterizedExpression> projectFunctionRewriter;
     private final AggregateFunctionRewriter<JdbcExpression, ?> aggregateFunctionRewriter;
+    private final Optional<Integer> fetchSize;
 
     @Inject
     public PostgreSqlClient(
@@ -344,6 +346,9 @@ public class PostgreSqlClient
                 this.connectorExpressionRewriter,
                 ImmutableSet.<ProjectFunctionRule<JdbcExpression, ParameterizedExpression>>builder()
                         .add(new RewriteStringReverseFunction())
+                        .add(new RewriteVectorDistanceFunction("euclidean_distance", "<->"))
+                        .add(new RewriteVectorDistanceFunction("cosine_distance", "<=>"))
+                        // TODO Rewrite Trino -dot_product to pgvector <#> operator
                         .build());
 
         JdbcTypeHandle bigintTypeHandle = new JdbcTypeHandle(Types.BIGINT, Optional.of("bigint"), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
@@ -368,6 +373,7 @@ public class PostgreSqlClient
                         .add(new ImplementRegrIntercept())
                         .add(new ImplementRegrSlope())
                         .build());
+        this.fetchSize = postgreSqlConfig.getFetchSize();
     }
 
     @Override
@@ -432,8 +438,11 @@ public class PostgreSqlClient
         PreparedStatement statement = connection.prepareStatement(sql);
         // This is a heuristic, not exact science. A better formula can perhaps be found with measurements.
         // Column count is not known for non-SELECT queries. Not setting fetch size for these.
-        if (columnCount.isPresent()) {
-            statement.setFetchSize(max(100_000 / columnCount.get(), 1_000));
+        Optional<Integer> fetchSize = Optional.ofNullable(this.fetchSize.orElseGet(() ->
+                columnCount.map(count -> max(100_000 / count, 1_000))
+                        .orElse(null)));
+        if (fetchSize.isPresent()) {
+            statement.setFetchSize(fetchSize.get());
         }
         return statement;
     }
@@ -1529,7 +1538,9 @@ public class PostgreSqlClient
 
     private static SliceWriteFunction typedVarcharWriteFunction(String jdbcTypeName)
     {
-        String bindExpression = format("CAST(? AS %s)", requireNonNull(jdbcTypeName, "jdbcTypeName is null"));
+        requireNonNull(jdbcTypeName, "jdbcTypeName is null");
+        String quotedJdbcTypeName = jdbcTypeName.startsWith("\"") && jdbcTypeName.endsWith("\"") ? jdbcTypeName : "\"%s\"".formatted(jdbcTypeName.replace("\"", "\"\""));
+        String bindExpression = format("CAST(? AS %s)", quotedJdbcTypeName);
 
         return new SliceWriteFunction()
         {

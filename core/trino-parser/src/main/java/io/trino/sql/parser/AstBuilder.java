@@ -1560,7 +1560,8 @@ class AstBuilder
         return new DropRole(
                 getLocation(context),
                 (Identifier) visit(context.name),
-                visitIfPresent(context.catalog, Identifier.class));
+                visitIfPresent(context.catalog, Identifier.class),
+                context.EXISTS() != null);
     }
 
     @Override
@@ -3421,7 +3422,7 @@ class AstBuilder
             type = DateTimeDataType.Type.TIMESTAMP;
         }
         else {
-            throw new ParsingException("Unexpected datetime type: " + context.getText(), getLocation(context));
+            throw parseError("Unexpected datetime type: " + context.getText(), context);
         }
 
         return new DateTimeDataType(
