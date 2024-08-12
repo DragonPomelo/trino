@@ -5,7 +5,7 @@
     <parent>
         <groupId>io.trino</groupId>
         <artifactId>trino-root</artifactId>
-        <version>453-SNAPSHOT</version>
+        <version>454-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
@@ -512,6 +512,14 @@
                                     <oldValue>"endTimeScaledDistribution"</oldValue>
                                     <newValue>"lastEndTimeScaledDistribution"</newValue>
                                     <justification>added new stats</justification>
+                                </item>
+                                <item>
+                                    <code>java.method.addedToInterface</code>
+                                    <new>method double io.trino.spi.metrics.Distribution&lt;T&gt;::getMax()</new>
+                                </item>
+                                <item>
+                                    <code>java.method.addedToInterface</code>
+                                    <new>method double io.trino.spi.metrics.Distribution&lt;T&gt;::getMin()</new>
                                 </item>
                                 <item>
                                     <code>java.method.addedToInterface</code>

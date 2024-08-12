@@ -33,12 +33,12 @@ import io.trino.filesystem.FileEntry;
 import io.trino.filesystem.FileIterator;
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
+import io.trino.metastore.TableInfo;
 import io.trino.plugin.base.classloader.ClassLoaderSafeSystemTable;
 import io.trino.plugin.base.filter.UtcConstraintExtractor;
 import io.trino.plugin.base.projection.ApplyProjectionUtil;
 import io.trino.plugin.base.projection.ApplyProjectionUtil.ProjectedColumnRepresentation;
 import io.trino.plugin.hive.HiveWrittenPartitions;
-import io.trino.plugin.hive.metastore.TableInfo;
 import io.trino.plugin.iceberg.aggregation.DataSketchStateSerializer;
 import io.trino.plugin.iceberg.aggregation.IcebergThetaSketchForStats;
 import io.trino.plugin.iceberg.catalog.TrinoCatalog;
@@ -187,7 +187,9 @@ import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
@@ -229,6 +231,7 @@ import static io.trino.plugin.iceberg.IcebergMetadataColumn.FILE_PATH;
 import static io.trino.plugin.iceberg.IcebergMetadataColumn.isMetadataColumnId;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.getExpireSnapshotMinRetention;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.getHiveCatalogName;
+import static io.trino.plugin.iceberg.IcebergSessionProperties.getQueryPartitionFilterRequiredSchemas;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.getRemoveOrphanFilesMinRetention;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.isCollectExtendedStatisticsOnWrite;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.isExtendedStatisticsEnabled;
@@ -344,7 +347,7 @@ public class IcebergMetadata
     private final IcebergFileSystemFactory fileSystemFactory;
     private final TableStatisticsWriter tableStatisticsWriter;
 
-    private final Map<IcebergTableHandle, TableStatistics> tableStatisticsCache = new ConcurrentHashMap<>();
+    private final Map<IcebergTableHandle, AtomicReference<TableStatistics>> tableStatisticsCache = new ConcurrentHashMap<>();
 
     private Transaction transaction;
     private Optional<Long> fromSnapshotForRefresh = Optional.empty();
@@ -742,7 +745,7 @@ public class IcebergMetadata
     public void validateScan(ConnectorSession session, ConnectorTableHandle handle)
     {
         IcebergTableHandle table = (IcebergTableHandle) handle;
-        if (isQueryPartitionFilterRequired(session) && table.getEnforcedPredicate().isAll() && !table.getForAnalyze().orElseThrow()) {
+        if (isQueryPartitionFilterRequiredForTable(session, table) && table.getEnforcedPredicate().isAll() && !table.getForAnalyze().orElseThrow()) {
             Schema schema = SchemaParser.fromJson(table.getTableSchemaJson());
             Optional<PartitionSpec> partitionSpec = table.getPartitionSpecJson()
                     .map(partitionSpecJson -> PartitionSpecParser.fromJson(schema, partitionSpecJson));
@@ -771,6 +774,14 @@ public class IcebergMetadata
                         format("Filter required for %s on at least one of the partition columns: %s", table.getSchemaTableName(), partitionColumnNames));
             }
         }
+    }
+
+    private static boolean isQueryPartitionFilterRequiredForTable(ConnectorSession session, IcebergTableHandle table)
+    {
+        Set<String> requiredSchemas = getQueryPartitionFilterRequiredSchemas(session);
+        // If query_partition_filter_required_schemas is empty then we would apply partition filter for all tables.
+        return isQueryPartitionFilterRequired(session) &&
+                (requiredSchemas.isEmpty() || requiredSchemas.contains(table.getSchemaName()));
     }
 
     @Override
@@ -1535,6 +1546,7 @@ public class IcebergMetadata
                     .withFileSizeInBytes(task.fileSizeInBytes())
                     .withFormat(optimizeHandle.fileFormat().toIceberg())
                     .withMetrics(task.metrics().metrics());
+            task.fileSplitOffsets().ifPresent(builder::withSplitOffsets);
 
             if (!icebergTable.spec().fields().isEmpty()) {
                 String partitionDataJson = task.partitionDataJson()
@@ -2240,7 +2252,11 @@ public class IcebergMetadata
             // Assume new table (CTAS), collect all stats possible
             return getStatisticsCollectionMetadata(tableMetadata, Optional.empty(), availableColumnNames -> {});
         }
-        TableStatistics tableStatistics = getTableStatistics(session, checkValidTableHandle(tableHandle));
+        IcebergTableHandle table = checkValidTableHandle(tableHandle);
+        Schema schema = SchemaParser.fromJson(table.getTableSchemaJson());
+        TableStatistics tableStatistics = getTableStatistics(
+                session,
+                table.withProjectedColumns(ImmutableSet.copyOf(getTopLevelColumns(schema, typeManager))));
         if (tableStatistics.getRowCount().getValue() == 0.0) {
             // Table has no data (empty, or wiped out). Collect all stats possible
             return getStatisticsCollectionMetadata(tableMetadata, Optional.empty(), availableColumnNames -> {});
@@ -2552,10 +2568,7 @@ public class IcebergMetadata
     @Override
     public List<SchemaTableName> listViews(ConnectorSession session, Optional<String> schemaName)
     {
-        return catalog.listTables(session, schemaName).stream()
-                .filter(info -> info.extendedRelationType() == TableInfo.ExtendedRelationType.TRINO_VIEW)
-                .map(TableInfo::tableName)
-                .toList();
+        return catalog.listViews(session, schemaName);
     }
 
     @Override
@@ -2885,36 +2898,41 @@ public class IcebergMetadata
         checkArgument(!originalHandle.isRecordScannedFiles(), "Unexpected scanned files recording set");
         checkArgument(originalHandle.getMaxScannedFileSize().isEmpty(), "Unexpected max scanned file size set");
 
-        return tableStatisticsCache.computeIfAbsent(
-                new IcebergTableHandle(
-                        originalHandle.getCatalog(),
-                        originalHandle.getSchemaName(),
-                        originalHandle.getTableName(),
-                        originalHandle.getTableType(),
-                        originalHandle.getSnapshotId(),
-                        originalHandle.getTableSchemaJson(),
-                        originalHandle.getPartitionSpecJson(),
-                        originalHandle.getFormatVersion(),
-                        originalHandle.getUnenforcedPredicate(),
-                        originalHandle.getEnforcedPredicate(),
-                        OptionalLong.empty(), // limit is currently not included in stats and is not enforced by the connector
-                        ImmutableSet.of(), // projectedColumns don't affect stats
-                        originalHandle.getNameMappingJson(),
-                        originalHandle.getTableLocation(),
-                        originalHandle.getStorageProperties(),
-                        false, // recordScannedFiles does not affect stats
-                        originalHandle.getMaxScannedFileSize(),
-                        ImmutableSet.of(), // constraintColumns do not affect stats
-                        Optional.empty()), // forAnalyze does not affect stats
-                handle -> {
-                    Table icebergTable = catalog.loadTable(session, handle.getSchemaTableName());
+        IcebergTableHandle cacheKey = new IcebergTableHandle(
+                originalHandle.getCatalog(),
+                originalHandle.getSchemaName(),
+                originalHandle.getTableName(),
+                originalHandle.getTableType(),
+                originalHandle.getSnapshotId(),
+                originalHandle.getTableSchemaJson(),
+                originalHandle.getPartitionSpecJson(),
+                originalHandle.getFormatVersion(),
+                originalHandle.getUnenforcedPredicate(),
+                originalHandle.getEnforcedPredicate(),
+                OptionalLong.empty(), // limit is currently not included in stats and is not enforced by the connector
+                ImmutableSet.of(), // projectedColumns are used to request statistics only for the required columns, but are not part of cache key
+                originalHandle.getNameMappingJson(),
+                originalHandle.getTableLocation(),
+                originalHandle.getStorageProperties(),
+                false, // recordScannedFiles does not affect stats
+                originalHandle.getMaxScannedFileSize(),
+                ImmutableSet.of(), // constraintColumns do not affect stats
+                Optional.empty()); // forAnalyze does not affect stats
+        return getIncrementally(
+                tableStatisticsCache,
+                cacheKey,
+                currentStatistics -> currentStatistics.getColumnStatistics().keySet().containsAll(originalHandle.getProjectedColumns()),
+                projectedColumns -> {
+                    Table icebergTable = catalog.loadTable(session, originalHandle.getSchemaTableName());
                     return TableStatisticsReader.getTableStatistics(
                             typeManager,
                             session,
-                            handle,
+                            originalHandle,
+                            projectedColumns,
                             icebergTable,
                             fileSystemFactory.create(session.getIdentity(), icebergTable.io().properties()));
-                });
+                },
+                originalHandle.getProjectedColumns());
     }
 
     @Override
@@ -3274,6 +3292,15 @@ public class IcebergMetadata
     }
 
     @Override
+    public boolean allowSplittingReadIntoMultipleSubQueries(ConnectorSession session, ConnectorTableHandle connectorTableHandle)
+    {
+        IcebergTableHandle tableHandle = (IcebergTableHandle) connectorTableHandle;
+        IcebergFileFormat storageFormat = getFileFormat(tableHandle.getStorageProperties());
+
+        return storageFormat == IcebergFileFormat.ORC || storageFormat == IcebergFileFormat.PARQUET;
+    }
+
+    @Override
     public WriterScalingOptions getNewTableWriterScalingOptions(ConnectorSession session, SchemaTableName tableName, Map<String, Object> tableProperties)
     {
         return WriterScalingOptions.ENABLED;
@@ -3355,4 +3382,48 @@ public class IcebergMetadata
 
     private record UnknownTableChange()
             implements TableChangeInfo {}
+
+    private static TableStatistics getIncrementally(
+            Map<IcebergTableHandle, AtomicReference<TableStatistics>> cache,
+            IcebergTableHandle key,
+            Predicate<TableStatistics> isSufficient,
+            Function<Set<IcebergColumnHandle>, TableStatistics> columnStatisticsLoader,
+            Set<IcebergColumnHandle> projectedColumns)
+    {
+        AtomicReference<TableStatistics> valueHolder = cache.computeIfAbsent(key, _ -> new AtomicReference<>());
+        TableStatistics oldValue = valueHolder.get();
+        if (oldValue != null && isSufficient.test(oldValue)) {
+            return oldValue;
+        }
+
+        TableStatistics newValue;
+        if (oldValue == null) {
+            newValue = columnStatisticsLoader.apply(projectedColumns);
+        }
+        else {
+            Sets.SetView<IcebergColumnHandle> missingColumns = difference(projectedColumns, oldValue.getColumnStatistics().keySet());
+            newValue = columnStatisticsLoader.apply(missingColumns);
+        }
+
+        verifyNotNull(newValue, "loader returned null for %s", key);
+
+        TableStatistics merged = mergeColumnStatistics(oldValue, newValue);
+        if (!valueHolder.compareAndSet(oldValue, merged)) {
+            // if the value changed in the valueHolder, we only add newly loaded value to be sure we have up-to-date value
+            valueHolder.accumulateAndGet(newValue, IcebergMetadata::mergeColumnStatistics);
+        }
+        return merged;
+    }
+
+    private static TableStatistics mergeColumnStatistics(TableStatistics currentStats, TableStatistics newStats)
+    {
+        requireNonNull(newStats, "newStats is null");
+        TableStatistics.Builder statisticsBuilder = TableStatistics.builder();
+        if (currentStats != null) {
+            currentStats.getColumnStatistics().forEach(statisticsBuilder::setColumnStatistics);
+        }
+        statisticsBuilder.setRowCount(newStats.getRowCount());
+        newStats.getColumnStatistics().forEach(statisticsBuilder::setColumnStatistics);
+        return statisticsBuilder.build();
+    }
 }
