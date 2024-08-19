@@ -83,6 +83,9 @@ public class SaphanaClient
 {
     private final List<String> tableTypes;
 
+    private static final int SAP_HANA_VARCHAR_MAX_LENGTH = 5000;
+    private static final int MAX_SUPPORTED_DATE_TIME_PRECISION = 6;
+
     @Inject
     public SaphanaClient(
             BaseJdbcConfig config,
@@ -215,9 +218,22 @@ public class SaphanaClient
         }
 
         if (type instanceof VarcharType varcharType) {
-            String dataType = "varchar(" + (varcharType.isUnbounded() ? VarcharType.MAX_LENGTH : varcharType.getBoundedLength()) + ")";
+            String dataType;
+            if (varcharType.isUnbounded() || varcharType.getBoundedLength() > SAP_HANA_VARCHAR_MAX_LENGTH) {
+                dataType = "nclob";
+            } else {
+                dataType = "nvarchar(" + varcharType.getBoundedLength() + ")";
+            }
 
             return WriteMapping.sliceMapping(dataType, varcharWriteFunction());
+        }
+
+        if (type instanceof TimestampType timestampType) {
+            if (timestampType.getPrecision() <= MAX_SUPPORTED_DATE_TIME_PRECISION) {
+                verify(timestampType.getPrecision() <= TimestampType.MAX_SHORT_PRECISION);
+                return WriteMapping.longMapping(format("timestamp(%s)", timestampType.getPrecision()), timestampWriteFunction(timestampType));
+            }
+            return WriteMapping.objectMapping(format("timestamp(%s)", MAX_SUPPORTED_DATE_TIME_PRECISION), longTimestampWriteFunction(timestampType, MAX_SUPPORTED_DATE_TIME_PRECISION));
         }
 
         throw new TrinoException(NOT_SUPPORTED, "Unsupported column type: " + type.getDisplayName());
