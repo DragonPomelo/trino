@@ -25,8 +25,6 @@ import org.weakref.jmx.$internal.guava.collect.ImmutableList;
 
 import java.sql.Connection;
 import java.sql.Types;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
 
@@ -60,8 +58,6 @@ public class SaphanaClient
 
     private static final int SAP_HANA_VARCHAR_MAX_LENGTH = 5000;
     private static final int MAX_SUPPORTED_DATE_TIME_PRECISION = 6;
-    private static final DateTimeFormatter SNOWFLAKE_DATE_FORMATTER = DateTimeFormatter.ofPattern("uuuu-MM-dd");
-    private static final DateTimeFormatter SNOWFLAKE_TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSSSSS");
 
     @Inject
     public SaphanaClient(
