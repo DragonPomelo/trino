@@ -218,7 +218,7 @@ public class SaphanaClient
         }
 
         if (type == VARBINARY) {
-            return WriteMapping.sliceMapping("mediumblob", varbinaryWriteFunction());
+            return WriteMapping.sliceMapping("blob", varbinaryWriteFunction());
         }
 
         if (type instanceof CharType) {
