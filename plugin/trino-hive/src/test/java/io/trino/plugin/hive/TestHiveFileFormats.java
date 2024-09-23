@@ -616,12 +616,15 @@ public final class TestHiveFileFormats
     public void testParquetCaseSensitivity(int rowCount)
             throws Exception
     {
-        TestColumn writeColumn = new TestColumn("UPPER_CASE_COLUMN", createVarcharType(4), new HiveVarchar("test", 4), utf8Slice("test"));
-        TestColumn readColumn = new TestColumn("uppeR_casE_columN", createVarcharType(4), new HiveVarchar("test", 4), utf8Slice("test"));
+        TestColumn writeColumnA = new TestColumn("UPPER_CASE_COLUMN", createVarcharType(5), new HiveVarchar("testA", 5), utf8Slice("testA"));
+        TestColumn writeColumnB = new TestColumn("Upper_Case_Column", createVarcharType(5), new HiveVarchar("testB", 5), utf8Slice("testB"));
+        TestColumn readColumn = new TestColumn("uppeR_casE_columN", createVarcharType(5), new HiveVarchar("testA", 5), utf8Slice("testA"));
         assertThatFileFormat(PARQUET)
-                .withWriteColumns(ImmutableList.of(writeColumn))
+                .withWriteColumns(ImmutableList.of(writeColumnA, writeColumnB))
                 .withReadColumns(ImmutableList.of(readColumn))
-                .withSession(PARQUET_SESSION_USE_NAME)
+                // Parquet writer validation will attempt to read back all written columns, while the reader is case-insensitive and does not support reading all columns for this case.
+                // Since this is not a valid scenario for Trino parquet writer, we disable parquet writer validation to avoid test failures
+                .withSession(getHiveSession(createParquetHiveConfig(true), new ParquetWriterConfig().setValidationPercentage(0)))
                 .withRowsCount(rowCount)
                 .withFileWriterFactory(fileSystemFactory -> new ParquetFileWriterFactory(fileSystemFactory, new NodeVersion("test-version"), TESTING_TYPE_MANAGER, new HiveConfig(), STATS))
                 .isReadableByPageSource(fileSystemFactory -> new ParquetPageSourceFactory(fileSystemFactory, STATS, new ParquetReaderConfig(), new HiveConfig()));
@@ -1004,6 +1007,7 @@ public final class TestHiveFileFormats
                 0,
                 fileSize,
                 paddedFileSize,
+                12345,
                 splitProperties,
                 TupleDomain.all(),
                 TESTING_TYPE_MANAGER,
@@ -1424,7 +1428,7 @@ public final class TestHiveFileFormats
             if (object instanceof HiveChar) {
                 object = ((HiveChar) object).getValue();
             }
-            charType.writeSlice(builder, truncateToLengthAndTrimSpaces(utf8Slice((String) object), ((CharType) type).getLength()));
+            charType.writeSlice(builder, truncateToLengthAndTrimSpaces(utf8Slice((String) object), charType.getLength()));
         }
         else if (type == DATE) {
             long days = ((Date) object).toEpochDay();

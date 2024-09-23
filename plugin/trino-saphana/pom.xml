@@ -4,12 +4,12 @@
     <parent>
         <groupId>io.trino</groupId>
         <artifactId>trino-root</artifactId>
-        <version>454-SNAPSHOT</version>
+        <version>459-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>trino-saphana</artifactId>
-    <packaging>trino-plugin</packaging>
+    <packaging>trino-plugin</packaging>plugin/trino-session-property-managers/pom.xml
     <description>Trino - Example JDBC connector</description>
 
     <dependencies>

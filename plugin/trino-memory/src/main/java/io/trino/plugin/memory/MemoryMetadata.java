@@ -45,6 +45,7 @@ import io.trino.spi.connector.RelationCommentMetadata;
 import io.trino.spi.connector.RetryMode;
 import io.trino.spi.connector.SampleApplicationResult;
 import io.trino.spi.connector.SampleType;
+import io.trino.spi.connector.SaveMode;
 import io.trino.spi.connector.SchemaNotFoundException;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
@@ -83,6 +84,7 @@ import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
 import static io.trino.spi.StandardErrorCode.SCHEMA_NOT_EMPTY;
 import static io.trino.spi.connector.RetryMode.NO_RETRIES;
 import static io.trino.spi.connector.SampleType.SYSTEM;
+import static io.trino.spi.connector.SaveMode.REPLACE;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 import static java.util.function.Function.identity;
@@ -152,6 +154,42 @@ public class MemoryMetadata
         }
 
         verify(schemas.remove(schemaName));
+    }
+
+    @Override
+    public synchronized void renameSchema(ConnectorSession session, String source, String target)
+    {
+        if (!schemas.remove(source)) {
+            throw new SchemaNotFoundException(source);
+        }
+        schemas.add(target);
+
+        for (Map.Entry<SchemaTableName, Long> table : tableIds.entrySet()) {
+            if (table.getKey().getSchemaName().equals(source)) {
+                tableIds.remove(table.getKey());
+                tableIds.put(new SchemaTableName(target, table.getKey().getTableName()), table.getValue());
+            }
+        }
+
+        for (TableInfo table : tables.values()) {
+            if (table.schemaName().equals(source)) {
+                tables.put(table.id(), new TableInfo(table.id(), target, table.tableName(), table.columns(), false, table.dataFragments(), table.comment()));
+            }
+        }
+
+        for (Map.Entry<SchemaTableName, ConnectorViewDefinition> view : views.entrySet()) {
+            if (view.getKey().getSchemaName().equals(source)) {
+                views.remove(view.getKey());
+                views.put(new SchemaTableName(target, view.getKey().getTableName()), view.getValue());
+            }
+        }
+
+        for (Map.Entry<SchemaFunctionName, Map<String, LanguageFunction>> function : functions.entrySet()) {
+            if (function.getKey().getSchemaName().equals(source)) {
+                functions.remove(function.getKey());
+                functions.put(new SchemaFunctionName(target, function.getKey().getFunctionName()), function.getValue());
+            }
+        }
     }
 
     @GuardedBy("this")
@@ -285,15 +323,21 @@ public class MemoryMetadata
     }
 
     @Override
-    public synchronized void createTable(ConnectorSession session, ConnectorTableMetadata tableMetadata, boolean ignoreExisting)
+    public synchronized void createTable(ConnectorSession session, ConnectorTableMetadata tableMetadata, SaveMode saveMode)
     {
-        ConnectorOutputTableHandle outputTableHandle = beginCreateTable(session, tableMetadata, Optional.empty(), NO_RETRIES);
+        if (saveMode == REPLACE) {
+            throw new TrinoException(NOT_SUPPORTED, "This connector does not support replacing tables");
+        }
+        ConnectorOutputTableHandle outputTableHandle = beginCreateTable(session, tableMetadata, Optional.empty(), NO_RETRIES, false);
         finishCreateTable(session, outputTableHandle, ImmutableList.of(), ImmutableList.of());
     }
 
     @Override
-    public synchronized MemoryOutputTableHandle beginCreateTable(ConnectorSession session, ConnectorTableMetadata tableMetadata, Optional<ConnectorTableLayout> layout, RetryMode retryMode)
+    public synchronized MemoryOutputTableHandle beginCreateTable(ConnectorSession session, ConnectorTableMetadata tableMetadata, Optional<ConnectorTableLayout> layout, RetryMode retryMode, boolean replace)
     {
+        if (replace) {
+            throw new TrinoException(NOT_SUPPORTED, "This connector does not support replacing tables");
+        }
         checkSchemaExists(tableMetadata.getTable().getSchemaName());
         checkTableNotExists(tableMetadata.getTable());
         long tableId = nextTableId.getAndIncrement();
@@ -432,8 +476,9 @@ public class MemoryMetadata
     }
 
     @Override
-    public synchronized void createView(ConnectorSession session, SchemaTableName viewName, ConnectorViewDefinition definition, boolean replace)
+    public synchronized void createView(ConnectorSession session, SchemaTableName viewName, ConnectorViewDefinition definition, Map<String, Object> viewProperties, boolean replace)
     {
+        checkArgument(viewProperties.isEmpty(), "This connector does not support creating views with properties");
         checkSchemaExists(viewName.getSchemaName());
         if (tableIds.containsKey(viewName) && !replace) {
             throw new TrinoException(ALREADY_EXISTS, "View already exists: " + viewName);

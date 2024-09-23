@@ -25,6 +25,7 @@ import io.trino.testing.QueryRunner;
 import io.trino.testing.TestingConnectorBehavior;
 import org.apache.iceberg.BaseTable;
 import org.assertj.core.util.Files;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.parallel.Isolated;
@@ -84,7 +85,8 @@ final class TestIcebergPolarisCatalogConnectorSmokeTest
                 .addIcebergProperty("iceberg.rest-catalog.uri", polarisCatalog.restUri() + "/api/catalog")
                 .addIcebergProperty("iceberg.rest-catalog.warehouse", TestingPolarisCatalog.WAREHOUSE)
                 .addIcebergProperty("iceberg.rest-catalog.security", "OAUTH2")
-                .addIcebergProperty("iceberg.rest-catalog.oauth2.token", polarisCatalog.oauth2Token())
+                .addIcebergProperty("iceberg.rest-catalog.oauth2.credential", polarisCatalog.oauth2Credentials())
+                .addIcebergProperty("iceberg.rest-catalog.oauth2.scope", "PRINCIPAL_ROLE:ALL")
                 .setInitialTables(REQUIRED_TPCH_TABLES)
                 .build();
     }
@@ -163,6 +165,7 @@ final class TestIcebergPolarisCatalogConnectorSmokeTest
 
     @Test
     @Override
+    @Disabled("Disable as register table is broken with S3 in Polaris. More info at https://github.com/trinodb/trino/pull/23099")
     public void testRegisterTableWithDroppedTable()
     {
         assertThatThrownBy(super::testRegisterTableWithDroppedTable)

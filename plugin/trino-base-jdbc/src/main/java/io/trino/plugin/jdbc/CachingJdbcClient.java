@@ -93,7 +93,7 @@ public class CachingJdbcClient
 
     @Inject
     public CachingJdbcClient(
-            @StatsCollecting JdbcClient delegate,
+            @ForCaching JdbcClient delegate,
             Set<SessionPropertiesProvider> sessionPropertiesProviders,
             IdentityCacheMapping identityMapping,
             BaseJdbcConfig config)
@@ -240,9 +240,9 @@ public class CachingJdbcClient
     }
 
     @Override
-    public Optional<JdbcExpression> convertProjection(ConnectorSession session, ConnectorExpression expression, Map<String, ColumnHandle> assignments)
+    public Optional<JdbcExpression> convertProjection(ConnectorSession session, JdbcTableHandle handle, ConnectorExpression expression, Map<String, ColumnHandle> assignments)
     {
-        return delegate.convertProjection(session, expression, assignments);
+        return delegate.convertProjection(session, handle, expression, assignments);
     }
 
     @Override
@@ -388,7 +388,7 @@ public class CachingJdbcClient
     public void commitCreateTable(ConnectorSession session, JdbcOutputTableHandle handle, Set<Long> pageSinkIds)
     {
         delegate.commitCreateTable(session, handle, pageSinkIds);
-        invalidateTableCaches(new SchemaTableName(handle.getSchemaName(), handle.getTableName()));
+        invalidateTableCaches(handle.getRemoteTableName().getSchemaTableName());
     }
 
     @Override
@@ -401,7 +401,7 @@ public class CachingJdbcClient
     public void finishInsertTable(ConnectorSession session, JdbcOutputTableHandle handle, Set<Long> pageSinkIds)
     {
         delegate.finishInsertTable(session, handle, pageSinkIds);
-        onDataChanged(new SchemaTableName(handle.getSchemaName(), handle.getTableName()));
+        onDataChanged(handle.getRemoteTableName().getSchemaTableName());
     }
 
     @Override

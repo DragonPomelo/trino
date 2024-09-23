@@ -56,6 +56,7 @@ public class ClientSession
     private final String transactionId;
     private final Duration clientRequestTimeout;
     private final boolean compressionDisabled;
+    private Optional<String> encoding;
 
     public static Builder builder()
     {
@@ -95,7 +96,8 @@ public class ClientSession
             Map<String, String> extraCredentials,
             String transactionId,
             Duration clientRequestTimeout,
-            boolean compressionDisabled)
+            boolean compressionDisabled,
+            Optional<String> encoding)
     {
         this.server = requireNonNull(server, "server is null");
         this.principal = requireNonNull(principal, "principal is null");
@@ -118,6 +120,7 @@ public class ClientSession
         this.extraCredentials = ImmutableMap.copyOf(requireNonNull(extraCredentials, "extraCredentials is null"));
         this.clientRequestTimeout = clientRequestTimeout;
         this.compressionDisabled = compressionDisabled;
+        this.encoding = requireNonNull(encoding, "encoding is null");
 
         for (String clientTag : clientTags) {
             checkArgument(!clientTag.contains(","), "client tag cannot contain ','");
@@ -261,6 +264,11 @@ public class ClientSession
         return compressionDisabled;
     }
 
+    public Optional<String> getEncoding()
+    {
+        return encoding;
+    }
+
     @Override
     public String toString()
     {
@@ -283,6 +291,7 @@ public class ClientSession
                 .add("resourceEstimates", resourceEstimates)
                 .add("clientRequestTimeout", clientRequestTimeout)
                 .add("compressionDisabled", compressionDisabled)
+                .add("encoding", encoding)
                 .omitNullValues()
                 .toString();
     }
@@ -310,6 +319,7 @@ public class ClientSession
         private String transactionId;
         private Duration clientRequestTimeout;
         private boolean compressionDisabled;
+        private Optional<String> encoding = Optional.empty();
 
         private Builder() {}
 
@@ -337,6 +347,7 @@ public class ClientSession
             transactionId = clientSession.getTransactionId();
             clientRequestTimeout = clientSession.getClientRequestTimeout();
             compressionDisabled = clientSession.isCompressionDisabled();
+            encoding = clientSession.getEncoding();
         }
 
         public Builder server(URI server)
@@ -465,6 +476,12 @@ public class ClientSession
             return this;
         }
 
+        public Builder encoding(Optional<String> encoding)
+        {
+            this.encoding = encoding;
+            return this;
+        }
+
         public ClientSession build()
         {
             return new ClientSession(
@@ -488,7 +505,8 @@ public class ClientSession
                     credentials,
                     transactionId,
                     clientRequestTimeout,
-                    compressionDisabled);
+                    compressionDisabled,
+                    encoding);
         }
     }
 }

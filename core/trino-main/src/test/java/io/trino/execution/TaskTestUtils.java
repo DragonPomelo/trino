@@ -39,6 +39,7 @@ import io.trino.operator.FlatHashStrategyCompiler;
 import io.trino.operator.PagesIndex;
 import io.trino.operator.index.IndexJoinLookupStats;
 import io.trino.operator.index.IndexManager;
+import io.trino.server.protocol.spooling.QueryDataEncoders;
 import io.trino.spi.connector.CatalogHandle;
 import io.trino.spiller.GenericSpillerFactory;
 import io.trino.split.PageSinkManager;
@@ -68,6 +69,7 @@ import io.trino.util.FinalizerService;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static io.trino.SessionTestUtils.TEST_SESSION;
 import static io.trino.spi.type.BigintType.BIGINT;
@@ -170,6 +172,8 @@ public final class TaskTestUtils
                 new GenericSpillerFactory((types, spillContext, memoryContext) -> {
                     throw new UnsupportedOperationException();
                 }),
+                new QueryDataEncoders(Set.of()),
+                Optional.empty(),
                 (types, spillContext, memoryContext) -> {
                     throw new UnsupportedOperationException();
                 },

@@ -29,19 +29,9 @@ public class DropRole
     private final Optional<Identifier> catalog;
     private final boolean exists;
 
-    public DropRole(Identifier name, Optional<Identifier> catalog)
-    {
-        this(Optional.empty(), name, catalog, false);
-    }
-
     public DropRole(NodeLocation location, Identifier name, Optional<Identifier> catalog, boolean exists)
     {
-        this(Optional.of(location), name, catalog, exists);
-    }
-
-    private DropRole(Optional<NodeLocation> location, Identifier name, Optional<Identifier> catalog, boolean exists)
-    {
-        super(location);
+        super(Optional.of(location));
         this.name = requireNonNull(name, "name is null");
         this.catalog = requireNonNull(catalog, "catalog is null");
         this.exists = exists;
@@ -73,13 +63,14 @@ public class DropRole
         }
         DropRole dropRole = (DropRole) o;
         return Objects.equals(name, dropRole.name) &&
-                Objects.equals(catalog, dropRole.catalog);
+                Objects.equals(catalog, dropRole.catalog) &&
+                exists == dropRole.exists;
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hash(name, catalog);
+        return Objects.hash(name, catalog, exists);
     }
 
     @Override
@@ -88,6 +79,7 @@ public class DropRole
         return toStringHelper(this)
                 .add("name", name)
                 .add("catalog", catalog)
+                .add("exists", exists)
                 .toString();
     }
 

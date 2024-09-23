@@ -13,7 +13,12 @@
  */
 package io.trino.filesystem;
 
+import com.google.common.base.Throwables;
+import io.airlift.units.Duration;
+
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.Optional;
 import java.util.Set;
@@ -67,6 +72,17 @@ public interface TrinoFileSystem
      * @throws IllegalArgumentException if location is not valid for this file system
      */
     TrinoInputFile newInputFile(Location location, long length);
+
+    /**
+     * Creates a TrinoInputFile with a predeclared length and lastModifiedTime which can be used to read the file data.
+     * The length will be returned from {@link TrinoInputFile#length()} and the actual file length
+     * will never be checked. The lastModified will be returned from {@link TrinoInputFile#lastModified()} and the
+     * actual file last modified time will never be checked. The file location path cannot be empty, and must not end
+     * with a slash or whitespace.
+     *
+     * @throws IllegalArgumentException if location is not valid for this file system
+     */
+    TrinoInputFile newInputFile(Location location, long length, Instant lastModified);
 
     /**
      * Creates a TrinoOutputFile which can be used to create or overwrite the file. The file
@@ -147,7 +163,9 @@ public interface TrinoFileSystem
      * that start with the location are listed. In the rare case that a blob exists with the
      * exact name of the prefix, it is not included in the results.
      * <p>
-     * The returned FileEntry locations will start with the specified location exactly.
+     * The returned FileEntry locations will start with the specified location exactly
+     * and are lexicographically sorted (except for local HDFS which has the system-dependant
+     * ordering).
      *
      * @param location the directory to list
      * @throws IllegalArgumentException if location is not valid for this file system
@@ -223,4 +241,36 @@ public interface TrinoFileSystem
      */
     Optional<Location> createTemporaryDirectory(Location targetPath, String temporaryPrefix, String relativePrefix)
             throws IOException;
+
+    /**
+     * Returns the direct pre-signed URI location for the given storage location.
+     * <p></p>
+     * Pre-signed URIs allow for retrieval of the files directly from the storage location.
+     * This is useful for large files where the server would be a bottleneck.
+     *
+     * @throws UnsupportedOperationException if the pre-signed URIs are not supported
+     * @return the pre-signed URI to the storage location or `Optional.empty()`
+     *         if pre-signed URI cannot be generated.
+     */
+    default Optional<UriLocation> preSignedUri(Location location, Duration ttl)
+            throws IOException
+    {
+        throw new UnsupportedOperationException("Pre-signed URIs are not supported by " + getClass().getSimpleName());
+    }
+
+    /**
+     * Checks whether given exception is unrecoverable, so that further retries won't help
+     * <p>
+     * By default, all third party (AWS, Azure, GCP) SDKs will retry appropriate exceptions
+     * (either client side IO errors, or 500/503), so there is no need to retry those additionally.
+     * <p>
+     * If any custom retry behavior is needed, it is advised to change SDK's retry handlers,
+     * rather than introducing outer retry loop, which combined with SDKs default retries,
+     * could lead to prolonged, unnecessary retries
+     */
+    static boolean isUnrecoverableException(Throwable throwable)
+    {
+        return Throwables.getCausalChain(throwable).stream()
+                .anyMatch(t -> t instanceof TrinoFileSystemException || t instanceof FileNotFoundException || t instanceof UnsupportedOperationException);
+    }
 }

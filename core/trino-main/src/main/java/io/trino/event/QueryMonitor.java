@@ -164,6 +164,7 @@ public class QueryMonitor
                         new QueryMetadata(
                                 queryInfo.getQueryId().toString(),
                                 queryInfo.getSession().getTransactionId().map(TransactionId::toString),
+                                queryInfo.getSession().getQueryDataEncoding(),
                                 queryInfo.getQuery(),
                                 queryInfo.getUpdateType(),
                                 queryInfo.getPreparedQuery(),
@@ -182,6 +183,7 @@ public class QueryMonitor
                 new QueryMetadata(
                         queryInfo.getQueryId().toString(),
                         queryInfo.getSession().getTransactionId().map(TransactionId::toString),
+                        queryInfo.getSession().getQueryDataEncoding(),
                         queryInfo.getQuery(),
                         queryInfo.getUpdateType(),
                         queryInfo.getPreparedQuery(),
@@ -197,6 +199,7 @@ public class QueryMonitor
                         ofMillis(0),
                         ofMillis(0),
                         ofMillis(queryInfo.getQueryStats().getQueuedTime().toMillis()),
+                        Optional.empty(),
                         Optional.empty(),
                         Optional.empty(),
                         Optional.empty(),
@@ -286,6 +289,7 @@ public class QueryMonitor
         return new QueryMetadata(
                 queryInfo.getQueryId().toString(),
                 queryInfo.getSession().getTransactionId().map(TransactionId::toString),
+                queryInfo.getSession().getQueryDataEncoding(),
                 queryInfo.getQuery(),
                 Optional.ofNullable(queryInfo.getUpdateType()),
                 queryInfo.getPreparedQuery(),
@@ -317,6 +321,7 @@ public class QueryMonitor
                 Optional.of(ofMillis(queryStats.getAnalysisTime().toMillis())),
                 Optional.of(ofMillis(queryStats.getPlanningTime().toMillis())),
                 Optional.of(ofMillis(queryStats.getPlanningCpuTime().toMillis())),
+                Optional.of(ofMillis(queryStats.getStartingTime().toMillis())),
                 Optional.of(ofMillis(queryStats.getExecutionTime().toMillis())),
                 Optional.of(ofMillis(queryStats.getInputBlockedTime().toMillis())),
                 Optional.of(ofMillis(queryStats.getFailedInputBlockedTime().toMillis())),
@@ -620,6 +625,7 @@ public class QueryMonitor
             logQueryTimeline(
                     queryInfo.getQueryId(),
                     queryInfo.getState(),
+                    queryInfo.getSession().getQueryDataEncoding(),
                     Optional.ofNullable(queryInfo.getErrorCode()),
                     elapsed,
                     planning,
@@ -650,6 +656,7 @@ public class QueryMonitor
         logQueryTimeline(
                 queryInfo.getQueryId(),
                 queryInfo.getState(),
+                queryInfo.getSession().getQueryDataEncoding(),
                 Optional.ofNullable(queryInfo.getErrorCode()),
                 elapsed,
                 elapsed,
@@ -664,6 +671,7 @@ public class QueryMonitor
     private static void logQueryTimeline(
             QueryId queryId,
             QueryState queryState,
+            Optional<String> encoding,
             Optional<ErrorCode> errorCode,
             long elapsedMillis,
             long planningMillis,
@@ -674,7 +682,7 @@ public class QueryMonitor
             DateTime queryStartTime,
             DateTime queryEndTime)
     {
-        log.info("TIMELINE: Query %s :: %s%s :: elapsed %sms :: planning %sms :: waiting %sms :: scheduling %sms :: running %sms :: finishing %sms :: begin %s :: end %s",
+        log.info("TIMELINE: Query %s :: %s%s :: elapsed %sms :: planning %sms :: waiting %sms :: scheduling %sms :: running %sms :: finishing %sms :: begin %s :: end %s%s",
                 queryId,
                 queryState,
                 errorCode.map(code -> " (%s)".formatted(code.getName())).orElse(""),
@@ -685,7 +693,8 @@ public class QueryMonitor
                 runningMillis,
                 finishingMillis,
                 queryStartTime,
-                queryEndTime);
+                queryEndTime,
+                encoding.map(id -> " :: " + id).orElse(""));
     }
 
     private static List<StageCpuDistribution> getCpuDistributions(QueryInfo queryInfo)

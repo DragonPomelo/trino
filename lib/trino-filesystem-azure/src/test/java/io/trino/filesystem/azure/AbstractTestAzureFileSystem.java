@@ -16,6 +16,7 @@ package io.trino.filesystem.azure;
 import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.BlobContainerClientBuilder;
 import com.azure.storage.blob.models.BlobItem;
+import com.azure.storage.blob.specialized.BlockBlobClient;
 import com.azure.storage.file.datalake.DataLakeFileSystemClient;
 import com.azure.storage.file.datalake.DataLakeServiceClient;
 import com.azure.storage.file.datalake.DataLakeServiceClientBuilder;
@@ -112,12 +113,14 @@ public abstract class AbstractTestAzureFileSystem
     private boolean isHierarchicalNamespaceEnabled()
             throws IOException
     {
-        DataLakeFileSystemClient fileSystemClient = createDataLakeFileSystemClient();
         try {
-            return fileSystemClient.getDirectoryClient("/").exists();
+            BlockBlobClient blockBlobClient = blobContainerClient
+                    .getBlobClient("/")
+                    .getBlockBlobClient();
+            return blockBlobClient.exists();
         }
         catch (RuntimeException e) {
-            throw new IOException("Failed to check whether hierarchical namespaces is enabled for the storage account %s and container %s".formatted(account, containerName));
+            throw new IOException("Failed to check whether hierarchical namespaces is enabled for the storage account %s and container %s".formatted(account, containerName), e);
         }
     }
 
@@ -177,6 +180,12 @@ public abstract class AbstractTestAzureFileSystem
     }
 
     @Override
+    protected boolean supportsPreSignedUri()
+    {
+        return true;
+    }
+
+    @Override
     protected final TrinoFileSystem getFileSystem()
     {
         return fileSystem;
@@ -192,12 +201,6 @@ public abstract class AbstractTestAzureFileSystem
     protected final void verifyFileSystemIsEmpty()
     {
         assertThat(blobContainerClient.listBlobs()).map(BlobItem::getName).isEmpty();
-    }
-
-    @Override
-    protected boolean supportsCreateExclusive()
-    {
-        return true;
     }
 
     @Test

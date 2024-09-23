@@ -148,6 +148,10 @@ public final class IcebergQueryRunner
                 queryRunner.installPlugin(new TpchPlugin());
                 queryRunner.createCatalog("tpch", "tpch");
 
+                if (!icebergProperties.buildOrThrow().containsKey("fs.hadoop.enabled")) {
+                    icebergProperties.put("fs.hadoop.enabled", "true");
+                }
+
                 Path dataDir = metastoreDirectory.map(File::toPath).orElseGet(() -> queryRunner.getCoordinator().getBaseDataDir().resolve("iceberg_data"));
                 queryRunner.installPlugin(new TestingIcebergPlugin(dataDir));
                 queryRunner.createCatalog(ICEBERG_CATALOG, "iceberg", icebergProperties.buildOrThrow());
@@ -218,7 +222,8 @@ public final class IcebergQueryRunner
                     .addIcebergProperty("iceberg.rest-catalog.uri", polarisCatalog.restUri() + "/api/catalog")
                     .addIcebergProperty("iceberg.rest-catalog.warehouse", TestingPolarisCatalog.WAREHOUSE)
                     .addIcebergProperty("iceberg.rest-catalog.security", "OAUTH2")
-                    .addIcebergProperty("iceberg.rest-catalog.oauth2.token", polarisCatalog.oauth2Token())
+                    .addIcebergProperty("iceberg.rest-catalog.oauth2.credential", polarisCatalog.oauth2Credentials())
+                    .addIcebergProperty("iceberg.rest-catalog.oauth2.scope", "PRINCIPAL_ROLE:ALL")
                     .setInitialTables(TpchTable.getTables())
                     .build();
 
@@ -478,13 +483,21 @@ public final class IcebergQueryRunner
         public static void main(String[] args)
                 throws Exception
         {
-            Path exchangeManagerDirectory = createTempDirectory(null);
-            Map<String, String> exchangeManagerProperties = ImmutableMap.<String, String>builder()
-                    .put("exchange.base-directories", exchangeManagerDirectory.toAbsolutePath().toString())
-                    .buildOrThrow();
+            Logger log = Logger.get(IcebergQueryRunnerWithTaskRetries.class);
 
+            File exchangeManagerDirectory = createTempDirectory("exchange_manager").toFile();
+            Map<String, String> exchangeManagerProperties = ImmutableMap.<String, String>builder()
+                    .put("exchange.base-directories", exchangeManagerDirectory.getAbsolutePath())
+                    .buildOrThrow();
+            exchangeManagerDirectory.deleteOnExit();
+
+            File metastoreDir = createTempDirectory("iceberg_query_runner").toFile();
+            metastoreDir.deleteOnExit();
+
+            @SuppressWarnings("resource")
             QueryRunner queryRunner = IcebergQueryRunner.builder()
                     .addCoordinatorProperty("http-server.http.port", "8080")
+                    .addIcebergProperty("hive.metastore.catalog.dir", metastoreDir.toURI().toString())
                     .setExtraProperties(ImmutableMap.<String, String>builder()
                             .put("retry-policy", "TASK")
                             .put("fault-tolerant-execution-task-memory", "1GB")
@@ -496,7 +509,6 @@ public final class IcebergQueryRunner
                     })
                     .build();
 
-            Logger log = Logger.get(IcebergQueryRunnerWithTaskRetries.class);
             log.info("======== SERVER STARTED ========");
             log.info("\n====\n%s\n====", queryRunner.getCoordinator().getBaseUrl());
         }

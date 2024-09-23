@@ -24,6 +24,7 @@ import io.trino.plugin.jdbc.JdbcTypeHandle;
 import io.trino.plugin.jdbc.QueryParameter;
 import io.trino.plugin.jdbc.expression.ParameterizedExpression;
 import io.trino.spi.block.Block;
+import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.expression.Call;
 import io.trino.spi.expression.ConnectorExpression;
 import io.trino.spi.expression.Constant;
@@ -76,7 +77,7 @@ public final class RewriteVectorDistanceFunction
     }
 
     @Override
-    public Optional<JdbcExpression> rewrite(ConnectorExpression projectionExpression, Captures captures, RewriteContext<ParameterizedExpression> context)
+    public Optional<JdbcExpression> rewrite(ConnectorTableHandle handle, ConnectorExpression projectionExpression, Captures captures, RewriteContext<ParameterizedExpression> context)
     {
         Optional<ParameterizedExpression> leftExpression = rewrite(captures.get(LEFT_ARGUMENT), context);
         if (leftExpression.isEmpty()) {
@@ -103,7 +104,7 @@ public final class RewriteVectorDistanceFunction
                         Optional.empty())));
     }
 
-    private static Optional<ParameterizedExpression> rewrite(ConnectorExpression expression, RewriteContext<ParameterizedExpression> context)
+    public static Optional<ParameterizedExpression> rewrite(ConnectorExpression expression, RewriteContext<ParameterizedExpression> context)
     {
         if (expression instanceof Constant constant) {
             Type elementType = ((ArrayType) constant.getType()).getElementType();
@@ -124,12 +125,13 @@ public final class RewriteVectorDistanceFunction
         if (expression instanceof Call call && call.getFunctionName().equals(CAST_FUNCTION_NAME)) {
             ConnectorExpression argument = getOnlyElement(call.getArguments());
             if (argument instanceof Variable variable) {
-                JdbcTypeHandle typeHandle = ((JdbcColumnHandle) context.getAssignment(variable.getName())).getJdbcTypeHandle();
+                JdbcColumnHandle columnHandle = (JdbcColumnHandle) context.getAssignment(variable.getName());
+                JdbcTypeHandle typeHandle = columnHandle.getJdbcTypeHandle();
                 // TODO type.equals("vector") should be improved to support pushdown on vector type which is installed in other schemas
                 if (!typeHandle.jdbcTypeName().map(type -> type.equals("vector")).orElse(false)) {
                     return Optional.empty();
                 }
-                return Optional.of(new ParameterizedExpression(quoted(variable.getName()), ImmutableList.of()));
+                return Optional.of(new ParameterizedExpression(quoted(columnHandle.getColumnName()), ImmutableList.of()));
             }
             return Optional.empty();
         }
@@ -140,7 +142,7 @@ public final class RewriteVectorDistanceFunction
         return Optional.of(translatedArgument.orElseThrow());
     }
 
-    private static boolean isArrayTypeWithRealOrDouble(Type type)
+    public static boolean isArrayTypeWithRealOrDouble(Type type)
     {
         return type instanceof ArrayType arrayType && (arrayType.getElementType() == REAL || arrayType.getElementType() == DOUBLE);
     }

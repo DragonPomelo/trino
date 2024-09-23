@@ -17,8 +17,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import io.trino.Session;
 import io.trino.plugin.jdbc.BaseJdbcConnectorTest;
-import io.trino.plugin.jdbc.JdbcTableHandle;
-import io.trino.spi.predicate.TupleDomain;
 import io.trino.sql.planner.plan.AggregationNode;
 import io.trino.sql.planner.plan.FilterNode;
 import io.trino.testing.MaterializedResult;
@@ -47,8 +45,6 @@ import static io.trino.plugin.clickhouse.ClickHouseTableProperties.SAMPLE_BY_PRO
 import static io.trino.plugin.clickhouse.TestingClickHouseServer.CLICKHOUSE_LATEST_IMAGE;
 import static io.trino.plugin.jdbc.JdbcMetadataSessionProperties.DOMAIN_COMPACTION_THRESHOLD;
 import static io.trino.spi.type.VarcharType.VARCHAR;
-import static io.trino.sql.planner.assertions.PlanMatchPattern.node;
-import static io.trino.sql.planner.assertions.PlanMatchPattern.tableScan;
 import static io.trino.testing.MaterializedResult.resultBuilder;
 import static io.trino.testing.TestingNames.randomNameSuffix;
 import static java.lang.String.format;
@@ -78,7 +74,6 @@ public class TestClickHouseConnectorTest
                  SUPPORTS_DELETE,
                  SUPPORTS_DROP_NOT_NULL_CONSTRAINT,
                  SUPPORTS_NEGATIVE_DATE,
-                 SUPPORTS_PREDICATE_PUSHDOWN_WITH_VARCHAR_INEQUALITY,
                  SUPPORTS_ROW_TYPE,
                  SUPPORTS_SET_COLUMN_TYPE,
                  SUPPORTS_UPDATE -> false;
@@ -100,10 +95,16 @@ public class TestClickHouseConnectorTest
     @Test
     public void testSampleBySqlInjection()
     {
-        assertQueryFails("CREATE TABLE test (p1 int NOT NULL, p2 boolean NOT NULL, x VARCHAR) WITH (engine = 'MergeTree', order_by = ARRAY['p1', 'p2'], primary_key = ARRAY['p1', 'p2'], sample_by = 'p2; drop table tpch.nation')", "(?s).*Missing columns: 'p2; drop table tpch.nation.*");
-        assertUpdate("CREATE TABLE test (p1 int NOT NULL, p2 boolean NOT NULL, x VARCHAR) WITH (engine = 'MergeTree', order_by = ARRAY['p1', 'p2'], primary_key = ARRAY['p1', 'p2'], sample_by = 'p2')");
-        assertQueryFails("ALTER TABLE test SET PROPERTIES sample_by = 'p2; drop table tpch.nation'", "(?s).*Missing columns: 'p2; drop table tpch.nation.*");
-        assertUpdate("ALTER TABLE test SET PROPERTIES sample_by = 'p2'");
+        String tableName = "sql_injection_" + randomNameSuffix();
+        try {
+            assertQueryFails("CREATE TABLE " + tableName + " (p1 int NOT NULL, p2 boolean NOT NULL, x VARCHAR) WITH (engine = 'MergeTree', order_by = ARRAY['p1', 'p2'], primary_key = ARRAY['p1', 'p2'], sample_by = 'p2; drop table tpch.nation')", "(?s).*Missing columns: 'p2; drop table tpch.nation.*");
+            assertUpdate("CREATE TABLE " + tableName + " (p1 int NOT NULL, p2 boolean NOT NULL, x VARCHAR) WITH (engine = 'MergeTree', order_by = ARRAY['p1', 'p2'], primary_key = ARRAY['p1', 'p2'], sample_by = 'p2')");
+            assertQueryFails("ALTER TABLE " + tableName + " SET PROPERTIES sample_by = 'p2; drop table tpch.nation'", "(?s).*Missing columns: 'p2; drop table tpch.nation.*");
+            assertUpdate("ALTER TABLE " + tableName + " SET PROPERTIES sample_by = 'p2'");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
     }
 
     @Test
@@ -346,7 +347,7 @@ public class TestClickHouseConnectorTest
     @Test
     public void testDifferentEngine()
     {
-        String tableName = "test_add_column_" + randomNameSuffix();
+        String tableName = "test_different_engine_" + randomNameSuffix();
         // MergeTree
         assertUpdate("CREATE TABLE " + tableName + " (id int NOT NULL, x VARCHAR) WITH (engine = 'MergeTree', order_by = ARRAY['id'])");
         assertThat(getQueryRunner().tableExists(getSession(), tableName)).isTrue();
@@ -355,7 +356,9 @@ public class TestClickHouseConnectorTest
         assertThat(getQueryRunner().tableExists(getSession(), tableName)).isTrue();
         assertUpdate("DROP TABLE " + tableName);
         // MergeTree without order by
-        assertQueryFails("CREATE TABLE " + tableName + " (id int NOT NULL, x VARCHAR) WITH (engine = 'MergeTree')", "The property of order_by is required for table engine MergeTree\\(\\)");
+        assertUpdate("CREATE TABLE " + tableName + " (id int NOT NULL, x VARCHAR) WITH (engine = 'MergeTree')");
+        assertThat(getQueryRunner().tableExists(getSession(), tableName)).isTrue();
+        assertUpdate("DROP TABLE " + tableName);
 
         // MergeTree with optional
         assertUpdate("CREATE TABLE " + tableName + " (id int NOT NULL, x VARCHAR, logdate DATE NOT NULL) WITH " +
@@ -373,13 +376,13 @@ public class TestClickHouseConnectorTest
 
         //NOT support engine
         assertQueryFails("CREATE TABLE " + tableName + " (id int NOT NULL, x VARCHAR) WITH (engine = 'bad_engine')",
-                "line 1:76: Unable to set catalog 'clickhouse' table property 'engine' to.*");
+                ".* Unable to set catalog 'clickhouse' table property 'engine' to.*");
     }
 
     @Test
     public void testTableProperty()
     {
-        String tableName = "test_add_column_" + randomNameSuffix();
+        String tableName = "test_table_property_" + randomNameSuffix();
         // no table property, it should create a table with default Log engine table
         assertUpdate("CREATE TABLE " + tableName + " (id int NOT NULL, x VARCHAR)");
         assertThat(getQueryRunner().tableExists(getSession(), tableName)).isTrue();
@@ -509,15 +512,15 @@ public class TestClickHouseConnectorTest
 
         // Primary key must be a prefix of the sorting key,
         assertQueryFails("CREATE TABLE " + tableName + " (id int NOT NULL, x boolean NOT NULL, y boolean NOT NULL) WITH (engine = 'MergeTree', order_by = ARRAY['id'], sample_by = ARRAY['x', 'y'])",
-                "line 1:151: Invalid value for catalog 'clickhouse' table property 'sample_by': .*");
+                ".* Invalid value for catalog 'clickhouse' table property 'sample_by': .*");
 
         // wrong property type
         assertQueryFails("CREATE TABLE " + tableName + " (id int NOT NULL) WITH (engine = 'MergeTree', order_by = 'id')",
-                "line 1:87: Invalid value for catalog 'clickhouse' table property 'order_by': .*");
+                ".* Invalid value for catalog 'clickhouse' table property 'order_by': .*");
         assertQueryFails("CREATE TABLE " + tableName + " (id int NOT NULL) WITH (engine = 'MergeTree', order_by = ARRAY['id'], primary_key = 'id')",
-                "line 1:111: Invalid value for catalog 'clickhouse' table property 'primary_key': .*");
+                ".* Invalid value for catalog 'clickhouse' table property 'primary_key': .*");
         assertQueryFails("CREATE TABLE " + tableName + " (id int NOT NULL) WITH (engine = 'MergeTree', order_by = ARRAY['id'], primary_key = ARRAY['id'], partition_by = 'id')",
-                "line 1:138: Invalid value for catalog 'clickhouse' table property 'partition_by': .*");
+                ".* Invalid value for catalog 'clickhouse' table property 'partition_by': .*");
     }
 
     @Test
@@ -815,6 +818,52 @@ public class TestClickHouseConnectorTest
     }
 
     @Test
+    public void testFloatPredicatePushdown()
+    {
+        try (TestTable table = new TestTable(
+                getQueryRunner()::execute,
+                "test_float_predicate_pushdown",
+                """
+                        (
+                        c_real real,
+                        c_real_neg_infinity real,
+                        c_real_pos_infinity real,
+                        c_real_nan real,
+                        c_double double,
+                        c_double_neg_infinity double,
+                        c_double_pos_infinity double,
+                        c_double_nan double)""",
+                List.of("3.14, -infinity(), +infinity(), nan(), 3.14, -infinity(), +infinity(), nan()"))) {
+            assertThat(query("SELECT c_real FROM %s WHERE c_real = real '3.14'".formatted(table.getName())))
+                    // because of https://github.com/trinodb/trino/issues/9998
+                    .isNotFullyPushedDown(FilterNode.class);
+
+            assertThat(query("SELECT c_real FROM %s WHERE c_real_neg_infinity = -infinity()".formatted(table.getName())))
+                    // because of https://github.com/trinodb/trino/issues/9998
+                    .isNotFullyPushedDown(FilterNode.class);
+
+            assertThat(query("SELECT c_real FROM %s WHERE c_real_pos_infinity = +infinity()".formatted(table.getName())))
+                    // because of https://github.com/trinodb/trino/issues/9998
+                    .isNotFullyPushedDown(FilterNode.class);
+
+            assertThat(query("SELECT c_real FROM %s WHERE c_real_nan = nan()".formatted(table.getName())))
+                    .isReplacedWithEmptyValues();
+
+            assertThat(query("SELECT c_real FROM %s WHERE c_double = double '3.14'".formatted(table.getName())))
+                    .isFullyPushedDown();
+
+            assertThat(query("SELECT c_real FROM %s WHERE c_double_neg_infinity = -infinity()".formatted(table.getName())))
+                    .isFullyPushedDown();
+
+            assertThat(query("SELECT c_real FROM %s WHERE c_double_pos_infinity = +infinity()".formatted(table.getName())))
+                    .isFullyPushedDown();
+
+            assertThat(query("SELECT c_real FROM %s WHERE c_double_nan = nan()".formatted(table.getName())))
+                    .isReplacedWithEmptyValues();
+        }
+    }
+
+    @Test
     public void testTextualPredicatePushdown()
     {
         // varchar equality
@@ -825,7 +874,7 @@ public class TestClickHouseConnectorTest
         // varchar range
         assertThat(query("SELECT regionkey, nationkey, name FROM nation WHERE name BETWEEN 'POLAND' AND 'RPA'"))
                 .matches("VALUES (BIGINT '3', BIGINT '19', CAST('ROMANIA' AS varchar))")
-                .isNotFullyPushedDown(FilterNode.class);
+                .isFullyPushedDown();
 
         // varchar IN without domain compaction
         assertThat(query("SELECT regionkey, nationkey, name FROM nation WHERE name IN ('POLAND', 'ROMANIA', 'VIETNAM')"))
@@ -843,17 +892,10 @@ public class TestClickHouseConnectorTest
                 .matches("VALUES " +
                         "(BIGINT '3', BIGINT '19', CAST('ROMANIA' AS varchar)), " +
                         "(BIGINT '2', BIGINT '21', CAST('VIETNAM' AS varchar))")
-                // Filter node is retained as no constraint is pushed into connector.
+                // Filter node is retained as constraint is pushed into connector is simplified, and
                 // The compacted domain is a range predicate which can give wrong results
-                // if pushed down as ClickHouse has different sort ordering for letters from Trino
-                .isNotFullyPushedDown(
-                        node(
-                                FilterNode.class,
-                                // verify that no constraint is applied by the connector
-                                tableScan(
-                                        tableHandle -> ((JdbcTableHandle) tableHandle).getConstraint().isAll(),
-                                        TupleDomain.all(),
-                                        ImmutableMap.of())));
+                // so has to be filtered by trino too to ensure correct predicate.
+                .isNotFullyPushedDown(FilterNode.class);
 
         // varchar different case
         assertThat(query("SELECT regionkey, nationkey, name FROM nation WHERE name = 'romania'"))

@@ -2,7 +2,10 @@
 
 Trino includes a native implementation to access [Amazon
 S3](https://aws.amazon.com/s3/) and compatible storage systems with a catalog
-using the Delta Lake, Hive, Hudi, or Iceberg connectors.
+using the Delta Lake, Hive, Hudi, or Iceberg connectors. While Trino is designed
+to support S3-compatible storage systems, only AWS S3 and MinIO are tested for
+compatibility. For other storage systems, perform your own testing and consult
+your vendor for more information.
 
 Enable the native implementation with `fs.native-s3.enabled=true` in your
 catalog properties file.
@@ -19,15 +22,16 @@ support:
 * - Property
   - Description
 * - `fs.native-s3.enabled`
-  - Activate the native implementation for S3 storage support, and deactivate
-    all [legacy support](file-system-legacy). Defaults to `false`. Must be set
-    to `true` for all other properties be used.
+  - Activate the native implementation for S3 storage support. Defaults to
+    `false`. Set to `true` to use S3 and enable all other properties.
 * - `s3.endpoint`
   - Required endpoint URL for S3.
 * - `s3.region`
   - Required region name for S3.
 * - `s3.path-style-access`
   - Use path-style access for all requests to S3
+* - `s3.exclusive-create`
+  - Whether conditional write is supported by the S3-compatible storage. Defaults to `true`.
 * - `s3.canned-acl`
   - [Canned ACL](https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#canned-acl)
     to use when uploading files to S3. Defaults to `NONE`, which has the same

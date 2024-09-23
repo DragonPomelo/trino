@@ -33,6 +33,7 @@ import io.trino.security.AccessControl;
 import io.trino.server.HttpRequestSessionContextFactory;
 import io.trino.server.ProtocolConfig;
 import io.trino.server.protocol.PreparedStatementEncoder;
+import io.trino.server.protocol.spooling.QueryDataEncoder;
 import io.trino.server.security.PasswordAuthenticatorManager;
 import io.trino.server.security.ResourceSecurity;
 import io.trino.server.security.oauth2.ChallengeFailedException;
@@ -306,7 +307,7 @@ public class TestWebUi
 
         String body = assertOk(client, getLoginHtmlLocation(baseUri))
                 .orElseThrow(() -> new AssertionError("No response body"));
-        assertThat(body).contains("action=\"/ui/login\"");
+        assertThat(body).contains("action=\"login\"");
         assertThat(body).contains("method=\"post\"");
 
         assertThat(body).doesNotContain("<!-- This value will be replaced -->");
@@ -424,7 +425,8 @@ public class TestWebUi
                     createTestMetadataManager(),
                     ImmutableSet::of,
                     accessControl,
-                    new ProtocolConfig());
+                    new ProtocolConfig(),
+                    QueryDataEncoder.EncoderSelector.noEncoder());
         }
 
         @ResourceSecurity(WEB_UI)
@@ -1246,7 +1248,7 @@ public class TestWebUi
         HttpServerConfig config = new HttpServerConfig().setHttpPort(0);
         HttpServerInfo httpServerInfo = new HttpServerInfo(config, nodeInfo);
 
-        return new TestingHttpServer(httpServerInfo, nodeInfo, config, new JwkServlet(), ImmutableMap.of());
+        return new TestingHttpServer(httpServerInfo, nodeInfo, config, new JwkServlet());
     }
 
     private static class JwkServlet

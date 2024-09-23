@@ -84,15 +84,15 @@ public abstract class AbstractTestS3FileSystem
     }
 
     @Override
-    protected boolean isCreateExclusive()
+    protected final boolean supportsRenameFile()
     {
         return false;
     }
 
     @Override
-    protected final boolean supportsRenameFile()
+    protected boolean supportsPreSignedUri()
     {
-        return false;
+        return true;
     }
 
     @Override

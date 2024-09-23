@@ -22,6 +22,11 @@ import com.azure.storage.blob.BlobContainerClient;
 import com.azure.storage.blob.BlobContainerClientBuilder;
 import com.azure.storage.blob.models.BlobItem;
 import com.azure.storage.blob.models.ListBlobsOptions;
+import com.azure.storage.blob.models.UserDelegationKey;
+import com.azure.storage.blob.sas.BlobSasPermission;
+import com.azure.storage.blob.sas.BlobServiceSasSignatureValues;
+import com.azure.storage.blob.specialized.BlockBlobClient;
+import com.azure.storage.common.sas.SasProtocol;
 import com.azure.storage.file.datalake.DataLakeDirectoryClient;
 import com.azure.storage.file.datalake.DataLakeFileClient;
 import com.azure.storage.file.datalake.DataLakeFileSystemClient;
@@ -34,13 +39,20 @@ import com.azure.storage.file.datalake.models.PathItem;
 import com.azure.storage.file.datalake.options.DataLakePathDeleteOptions;
 import com.google.common.collect.ImmutableSet;
 import io.airlift.units.DataSize;
+import io.airlift.units.Duration;
 import io.trino.filesystem.FileIterator;
 import io.trino.filesystem.Location;
 import io.trino.filesystem.TrinoFileSystem;
+import io.trino.filesystem.TrinoFileSystemException;
 import io.trino.filesystem.TrinoInputFile;
 import io.trino.filesystem.TrinoOutputFile;
+import io.trino.filesystem.UriLocation;
 
 import java.io.IOException;
+import java.net.URI;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -52,6 +64,7 @@ import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static io.trino.filesystem.azure.AzureUtils.handleAzureException;
 import static io.trino.filesystem.azure.AzureUtils.isFileNotFoundException;
 import static java.lang.Math.toIntExact;
+import static java.time.temporal.ChronoUnit.MILLIS;
 import static java.util.Objects.requireNonNull;
 import static java.util.UUID.randomUUID;
 import static java.util.function.Predicate.not;
@@ -62,6 +75,7 @@ public class AzureFileSystem
     private final HttpClient httpClient;
     private final TracingOptions tracingOptions;
     private final AzureAuth azureAuth;
+    private final String endpoint;
     private final int readBlockSizeBytes;
     private final long writeBlockSizeBytes;
     private final int maxWriteConcurrency;
@@ -71,6 +85,7 @@ public class AzureFileSystem
             HttpClient httpClient,
             TracingOptions tracingOptions,
             AzureAuth azureAuth,
+            String endpoint,
             DataSize readBlockSize,
             DataSize writeBlockSize,
             int maxWriteConcurrency,
@@ -79,6 +94,7 @@ public class AzureFileSystem
         this.httpClient = requireNonNull(httpClient, "httpClient is null");
         this.tracingOptions = requireNonNull(tracingOptions, "tracingOptions is null");
         this.azureAuth = requireNonNull(azureAuth, "azureAuth is null");
+        this.endpoint = requireNonNull(endpoint, "endpoint is null");
         this.readBlockSizeBytes = toIntExact(readBlockSize.toBytes());
         this.writeBlockSizeBytes = writeBlockSize.toBytes();
         checkArgument(maxWriteConcurrency >= 0, "maxWriteConcurrency is negative");
@@ -91,7 +107,7 @@ public class AzureFileSystem
     {
         AzureLocation azureLocation = new AzureLocation(location);
         BlobClient client = createBlobClient(azureLocation);
-        return new AzureInputFile(azureLocation, OptionalLong.empty(), client, readBlockSizeBytes);
+        return new AzureInputFile(azureLocation, OptionalLong.empty(), Optional.empty(), client, readBlockSizeBytes);
     }
 
     @Override
@@ -99,7 +115,15 @@ public class AzureFileSystem
     {
         AzureLocation azureLocation = new AzureLocation(location);
         BlobClient client = createBlobClient(azureLocation);
-        return new AzureInputFile(azureLocation, OptionalLong.of(length), client, readBlockSizeBytes);
+        return new AzureInputFile(azureLocation, OptionalLong.of(length), Optional.empty(), client, readBlockSizeBytes);
+    }
+
+    @Override
+    public TrinoInputFile newInputFile(Location location, long length, Instant lastModified)
+    {
+        AzureLocation azureLocation = new AzureLocation(location);
+        BlobClient client = createBlobClient(azureLocation);
+        return new AzureInputFile(azureLocation, OptionalLong.of(length), Optional.of(lastModified), client, readBlockSizeBytes);
     }
 
     @Override
@@ -165,7 +189,7 @@ public class AzureFileSystem
             DataLakeDirectoryClient directoryClient = createDirectoryClient(fileSystemClient, location.path());
             if (directoryClient.exists()) {
                 if (!directoryClient.getProperties().isDirectory()) {
-                    throw new IOException("Location is not a directory: " + location);
+                    throw new TrinoFileSystemException("Location is not a directory: " + location);
                 }
                 directoryClient.deleteIfExistsWithResponse(deleteRecursiveOptions, null, null);
             }
@@ -191,10 +215,10 @@ public class AzureFileSystem
         AzureLocation sourceLocation = new AzureLocation(source);
         AzureLocation targetLocation = new AzureLocation(target);
         if (!sourceLocation.account().equals(targetLocation.account())) {
-            throw new IOException("Cannot rename across storage accounts");
+            throw new TrinoFileSystemException("Cannot rename across storage accounts");
         }
         if (!Objects.equals(sourceLocation.container(), targetLocation.container())) {
-            throw new IOException("Cannot rename across storage account containers");
+            throw new TrinoFileSystemException("Cannot rename across storage account containers");
         }
 
         // DFS rename file works with all storage types
@@ -208,7 +232,7 @@ public class AzureFileSystem
             DataLakeFileSystemClient fileSystemClient = createFileSystemClient(source);
             DataLakeFileClient dataLakeFileClient = createFileClient(fileSystemClient, source.path());
             if (dataLakeFileClient.getProperties().isDirectory()) {
-                throw new IOException("Rename file from %s to %s, source is a directory".formatted(source, target));
+                throw new TrinoFileSystemException("Rename file from %s to %s, source is a directory".formatted(source, target));
             }
 
             createDirectoryIfNotExists(fileSystemClient, target.location().parentDirectory().path());
@@ -255,7 +279,7 @@ public class AzureFileSystem
                 return FileIterator.empty();
             }
             if (!directoryClient.getProperties().isDirectory()) {
-                throw new IOException("Location is not a directory: " + location);
+                throw new TrinoFileSystemException("Location is not a directory: " + location);
             }
             pathItems = directoryClient.listPaths(true, false, null, null);
         }
@@ -315,7 +339,7 @@ public class AzureFileSystem
             DataLakeFileSystemClient fileSystemClient = createFileSystemClient(azureLocation);
             DataLakeDirectoryClient directoryClient = createDirectoryIfNotExists(fileSystemClient, azureLocation.path());
             if (!directoryClient.getProperties().isDirectory()) {
-                throw new IOException("Location is not a directory: " + azureLocation);
+                throw new TrinoFileSystemException("Location is not a directory: " + azureLocation);
             }
         }
         catch (RuntimeException e) {
@@ -330,26 +354,26 @@ public class AzureFileSystem
         AzureLocation sourceLocation = new AzureLocation(source);
         AzureLocation targetLocation = new AzureLocation(target);
         if (!sourceLocation.account().equals(targetLocation.account())) {
-            throw new IOException("Cannot rename across storage accounts");
+            throw new TrinoFileSystemException("Cannot rename across storage accounts");
         }
         if (!Objects.equals(sourceLocation.container(), targetLocation.container())) {
-            throw new IOException("Cannot rename across storage account containers");
+            throw new TrinoFileSystemException("Cannot rename across storage account containers");
         }
         if (!isHierarchicalNamespaceEnabled(sourceLocation)) {
-            throw new IOException("Azure non-hierarchical does not support directory renames");
+            throw new TrinoFileSystemException("Azure non-hierarchical does not support directory renames");
         }
         if (sourceLocation.path().isEmpty() || targetLocation.path().isEmpty()) {
-            throw new IOException("Cannot rename %s to %s".formatted(source, target));
+            throw new TrinoFileSystemException("Cannot rename %s to %s".formatted(source, target));
         }
 
         try {
             DataLakeFileSystemClient fileSystemClient = createFileSystemClient(sourceLocation);
             DataLakeDirectoryClient directoryClient = createDirectoryClient(fileSystemClient, sourceLocation.path());
             if (!directoryClient.exists()) {
-                throw new IOException("Source directory does not exist: " + source);
+                throw new TrinoFileSystemException("Source directory does not exist: " + source);
             }
             if (!directoryClient.getProperties().isDirectory()) {
-                throw new IOException("Source is not a directory: " + source);
+                throw new TrinoFileSystemException("Source is not a directory: " + source);
             }
             directoryClient.rename(null, targetLocation.path());
         }
@@ -402,6 +426,69 @@ public class AzureFileSystem
         return Optional.of(temporary);
     }
 
+    @Override
+    public Optional<UriLocation> preSignedUri(Location location, Duration ttl)
+            throws IOException
+    {
+        return switch (azureAuth) {
+            case AzureAuthOauth _ -> oauth2PresignedUri(location, ttl);
+            case AzureAuthAccessKey _ -> accessKeyPresignedUri(location, ttl);
+            default -> throw new UnsupportedOperationException("Unsupported azure auth: " + azureAuth);
+        };
+    }
+
+    private Optional<UriLocation> oauth2PresignedUri(Location location, Duration ttl)
+            throws IOException
+    {
+        AzureLocation azureLocation = new AzureLocation(location);
+        BlobContainerClient client = createBlobContainerClient(azureLocation);
+
+        OffsetDateTime startTime = OffsetDateTime.now();
+        OffsetDateTime expiryTime = startTime.plus(ttl.toMillis(), MILLIS);
+        UserDelegationKey userDelegationKey = client.getServiceClient().getUserDelegationKey(startTime, expiryTime);
+
+        BlobSasPermission blobSasPermission = new BlobSasPermission()
+                .setReadPermission(true);
+
+        BlobServiceSasSignatureValues sasValues = new BlobServiceSasSignatureValues(expiryTime, blobSasPermission)
+                .setStartTime(startTime)
+                .setProtocol(SasProtocol.HTTPS_ONLY);
+
+        BlobClient blobClient = createBlobClient(azureLocation);
+        String sasToken = blobClient.generateUserDelegationSas(sasValues, userDelegationKey);
+        try {
+            return Optional.of(new UriLocation(URI.create(blobClient.getBlobUrl() + "?" + sasToken), Map.of()));
+        }
+        catch (Exception e) {
+            throw new IOException("Failed to generate pre-signed URI", e);
+        }
+    }
+
+    private Optional<UriLocation> accessKeyPresignedUri(Location location, Duration ttl)
+            throws IOException
+    {
+        AzureLocation azureLocation = new AzureLocation(location);
+        BlobClient client = createBlobClient(azureLocation);
+        BlobSasPermission blobSasPermission = new BlobSasPermission()
+                .setReadPermission(true);
+
+        OffsetDateTime startTime = OffsetDateTime.now();
+        OffsetDateTime expiryTime = startTime.plus(ttl.toMillis(), MILLIS);
+
+        BlobServiceSasSignatureValues values = new BlobServiceSasSignatureValues(expiryTime, blobSasPermission)
+                .setStartTime(startTime)
+                .setExpiryTime(expiryTime)
+                .setPermissions(blobSasPermission);
+
+        createBlobContainerClient(azureLocation).generateSas(values);
+        try {
+            return Optional.of(new UriLocation(URI.create(client.getBlobUrl() + "?" + client.generateSas(values)), Map.of()));
+        }
+        catch (Exception e) {
+            throw new IOException("Failed to generate pre-signed URI", e);
+        }
+    }
+
     private Set<Location> listGen2Directories(AzureLocation location)
             throws IOException
     {
@@ -416,7 +503,7 @@ public class AzureFileSystem
                 return ImmutableSet.of();
             }
             if (!directoryClient.getProperties().isDirectory()) {
-                throw new IOException("Location is not a directory: " + location);
+                throw new TrinoFileSystemException("Location is not a directory: " + location);
             }
             pathItems = directoryClient.listPaths(false, false, null, null);
         }
@@ -441,12 +528,22 @@ public class AzureFileSystem
             throws IOException
     {
         try {
-            DataLakeFileSystemClient fileSystemClient = createFileSystemClient(location);
-            return fileSystemClient.getDirectoryClient("/").exists();
+            BlockBlobClient blockBlobClient = createBlobContainerClient(location)
+                    .getBlobClient("/")
+                    .getBlockBlobClient();
+            return blockBlobClient.exists();
         }
         catch (RuntimeException e) {
             throw new IOException("Checking whether hierarchical namespace is enabled for the location %s failed".formatted(location), e);
         }
+    }
+
+    private String validatedEndpoint(AzureLocation location)
+    {
+        if (!location.endpoint().equals(endpoint)) {
+            throw new IllegalArgumentException("Location does not match configured Azure endpoint: " + location);
+        }
+        return location.endpoint();
     }
 
     private BlobClient createBlobClient(AzureLocation location)
@@ -461,7 +558,7 @@ public class AzureFileSystem
         BlobContainerClientBuilder builder = new BlobContainerClientBuilder()
                 .httpClient(httpClient)
                 .clientOptions(new ClientOptions().setTracingOptions(tracingOptions))
-                .endpoint(String.format("https://%s.blob.core.windows.net", location.account()));
+                .endpoint("https://%s.blob.%s".formatted(location.account(), validatedEndpoint(location)));
         azureAuth.setAuth(location.account(), builder);
         location.container().ifPresent(builder::containerName);
         return builder.buildClient();
@@ -474,7 +571,7 @@ public class AzureFileSystem
         DataLakeServiceClientBuilder builder = new DataLakeServiceClientBuilder()
                 .httpClient(httpClient)
                 .clientOptions(new ClientOptions().setTracingOptions(tracingOptions))
-                .endpoint(String.format("https://%s.dfs.core.windows.net", location.account()));
+                .endpoint("https://%s.dfs.%s".formatted(location.account(), validatedEndpoint(location)));
         azureAuth.setAuth(location.account(), builder);
         DataLakeServiceClient client = builder.buildClient();
         DataLakeFileSystemClient fileSystemClient = client.getFileSystemClient(location.container().orElseThrow());

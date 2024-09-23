@@ -82,7 +82,6 @@ public abstract class BaseBigQueryConnectorTest
             case SUPPORTS_ADD_COLUMN,
                     SUPPORTS_CREATE_MATERIALIZED_VIEW,
                     SUPPORTS_CREATE_VIEW,
-                    SUPPORTS_DEREFERENCE_PUSHDOWN,
                     SUPPORTS_MERGE,
                     SUPPORTS_NEGATIVE_DATE,
                     SUPPORTS_NOT_NULL_CONSTRAINT,
@@ -95,6 +94,11 @@ public abstract class BaseBigQueryConnectorTest
             default -> super.hasBehavior(connectorBehavior);
         };
     }
+
+    @Test
+    @Disabled // Disable this test because this test is slow and BigQuery connector doesn't support sample pushdown
+    @Override
+    public void testTableSampleBernoulli() {}
 
     @Override
     @Test
@@ -815,7 +819,7 @@ public abstract class BaseBigQueryConnectorTest
 
             // Verify query cache is empty
             assertThat(query(createNeverDisposition, "SELECT * FROM test." + materializedView))
-                    .failure().hasMessageMatching("Failed to run the query: Not found: Table .* was not found .*");
+                    .failure().hasMessageMatching("Failed to run the query: Not found: Table .*");
             // Populate cache and verify it
             assertQuery(queryResultsCacheSession, "SELECT * FROM test." + materializedView, "VALUES 5");
             assertQuery(createNeverDisposition, "SELECT * FROM test." + materializedView, "VALUES 5");

@@ -27,6 +27,7 @@ import io.trino.client.ProtocolHeaders;
 import io.trino.metadata.Metadata;
 import io.trino.security.AccessControl;
 import io.trino.server.protocol.PreparedStatementEncoder;
+import io.trino.server.protocol.spooling.QueryDataEncoder;
 import io.trino.spi.security.AccessDeniedException;
 import io.trino.spi.security.GroupProvider;
 import io.trino.spi.security.Identity;
@@ -71,6 +72,7 @@ public class HttpRequestSessionContextFactory
     private final GroupProvider groupProvider;
     private final AccessControl accessControl;
     private final Optional<String> alternateHeaderName;
+    private final QueryDataEncoder.EncoderSelector encoderSelector;
 
     @Inject
     public HttpRequestSessionContextFactory(
@@ -78,13 +80,15 @@ public class HttpRequestSessionContextFactory
             Metadata metadata,
             GroupProvider groupProvider,
             AccessControl accessControl,
-            ProtocolConfig protocolConfig)
+            ProtocolConfig protocolConfig,
+            QueryDataEncoder.EncoderSelector encoderSelector)
     {
         this.alternateHeaderName = protocolConfig.getAlternateHeaderName();
         this.preparedStatementEncoder = requireNonNull(preparedStatementEncoder, "preparedStatementEncoder is null");
         this.metadata = requireNonNull(metadata, "metadata is null");
         this.groupProvider = requireNonNull(groupProvider, "groupProvider is null");
         this.accessControl = requireNonNull(accessControl, "accessControl is null");
+        this.encoderSelector = requireNonNull(encoderSelector, "encoderSelector is null");
     }
 
     public SessionContext createSessionContext(
@@ -116,6 +120,11 @@ public class HttpRequestSessionContextFactory
         Optional<String> timeZoneId = Optional.ofNullable(headers.getFirst(protocolHeaders.requestTimeZone()));
         Optional<String> language = Optional.ofNullable(headers.getFirst(protocolHeaders.requestLanguage()));
         Optional<String> clientInfo = Optional.ofNullable(headers.getFirst(protocolHeaders.requestClientInfo()));
+        Optional<String> queryDataEncoding = Optional.ofNullable(headers.getFirst(protocolHeaders.requestQueryDataEncoding()))
+                .map(Splitter.on(',').trimResults().omitEmptyStrings()::splitToList)
+                .flatMap(encoderSelector::select)
+                .map(QueryDataEncoder.Factory::encoding);
+
         Set<String> clientTags = parseClientTags(protocolHeaders, headers);
         Set<String> clientCapabilities = parseClientCapabilities(protocolHeaders, headers);
         ResourceEstimates resourceEstimates = parseResourceEstimate(protocolHeaders, headers);
@@ -176,7 +185,8 @@ public class HttpRequestSessionContextFactory
                 preparedStatements,
                 transactionId,
                 clientTransactionSupport,
-                clientInfo);
+                clientInfo,
+                queryDataEncoding);
     }
 
     public Identity extractAuthorizedIdentity(HttpServletRequest servletRequest, HttpHeaders httpHeaders)
@@ -323,7 +333,11 @@ public class HttpRequestSessionContextFactory
 
     private static Map<String, String> parseExtraCredentials(ProtocolHeaders protocolHeaders, MultivaluedMap<String, String> headers)
     {
-        return parseProperty(headers, protocolHeaders.requestExtraCredential());
+        Map<String, String> credentials = parseProperty(headers, protocolHeaders.requestExtraCredential());
+        for (String name : credentials.keySet()) {
+            assertRequest(!name.startsWith("internal$"), "Invalid extra credential name: %s", name);
+        }
+        return credentials;
     }
 
     private static Map<String, String> parseProperty(MultivaluedMap<String, String> headers, String headerName)

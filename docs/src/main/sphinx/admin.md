@@ -18,12 +18,14 @@ admin/graceful-shutdown
 admin/fault-tolerant-execution
 ```
 
+(admin-event-listeners)=
 ## Event listeners
 
 ```{toctree}
 :titlesonly: true
 
 admin/event-listeners-http
+admin/event-listeners-kafka
 admin/event-listeners-mysql
 admin/event-listeners-openlineage
 ```

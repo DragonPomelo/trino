@@ -21,6 +21,10 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.errorprone.annotations.ThreadSafe;
 import io.airlift.units.Duration;
+import io.trino.client.spooling.DataAttributes;
+import io.trino.client.spooling.EncodedQueryData;
+import io.trino.client.spooling.SegmentLoader;
+import io.trino.client.spooling.encoding.QueryDataDecoders;
 import jakarta.annotation.Nullable;
 import okhttp3.Call;
 import okhttp3.Headers;
@@ -53,6 +57,7 @@ import java.util.stream.Stream;
 import static com.google.common.base.MoreObjects.firstNonNull;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Throwables.getCausalChain;
+import static com.google.common.base.Verify.verify;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.common.net.HttpHeaders.ACCEPT_ENCODING;
 import static com.google.common.net.HttpHeaders.USER_AGENT;
@@ -103,7 +108,11 @@ class StatementClientV1
 
     private final AtomicReference<State> state = new AtomicReference<>(State.RUNNING);
 
-    public StatementClientV1(Call.Factory httpCallFactory, ClientSession session, String query, Optional<Set<String>> clientCapabilities)
+    // Encoded data
+    private final SegmentLoader segmentLoader;
+    private final AtomicReference<QueryDataDecoder> decoder = new AtomicReference<>();
+
+    public StatementClientV1(Call.Factory httpCallFactory, Call.Factory segmentHttpCallFactory, ClientSession session, String query, Optional<Set<String>> clientCapabilities)
     {
         requireNonNull(httpCallFactory, "httpCallFactory is null");
         requireNonNull(session, "session is null");
@@ -125,15 +134,15 @@ class StatementClientV1
                 .map(Enum::name)
                 .collect(toImmutableSet())));
         this.compressionDisabled = session.isCompressionDisabled();
+        this.segmentLoader = new SegmentLoader(requireNonNull(segmentHttpCallFactory, "segmentHttpCallFactory is null"));
 
-        Request request = buildQueryRequest(session, query);
-
+        Request request = buildQueryRequest(session, query, session.getEncoding());
         // Pass empty as materializedJsonSizeLimit to always materialize the first response
         // to avoid losing the response body if the initial response parsing fails
         executeRequest(request, "starting query", OptionalLong.empty(), this::isTransient);
     }
 
-    private Request buildQueryRequest(ClientSession session, String query)
+    private Request buildQueryRequest(ClientSession session, String query, Optional<String> requestedEncoding)
     {
         HttpUrl url = HttpUrl.get(session.getServer());
         if (url == null) {
@@ -195,6 +204,8 @@ class StatementClientV1
 
         builder.addHeader(TRINO_HEADERS.requestClientCapabilities(), clientCapabilities);
 
+        requestedEncoding.ifPresent(encoding -> builder.addHeader(TRINO_HEADERS.requestQueryDataEncoding(), encoding));
+
         return builder.build();
     }
 
@@ -250,7 +261,20 @@ class StatementClientV1
     public QueryData currentData()
     {
         checkState(isRunning(), "current position is not valid (cursor past end)");
-        return currentResults.get();
+        QueryResults queryResults = currentResults.get();
+
+        if (queryResults == null || queryResults.getData() == null) {
+            return RawQueryData.of(null);
+        }
+
+        if (queryResults.getData() instanceof RawQueryData) {
+            // We need to reinterpret JSON values to have correct types
+            return ((RawQueryData) queryResults.getData())
+                    .fixTypes(queryResults.getColumns());
+        }
+
+        EncodedQueryData queryData = (EncodedQueryData) queryResults.getData();
+        return queryData.toRawData(decoder.get(), segmentLoader);
     }
 
     @Override
@@ -483,6 +507,21 @@ class StatementClientV1
         }
         if (headers.get(TRINO_HEADERS.responseClearTransactionId()) != null) {
             clearTransactionId.set(true);
+        }
+
+        // Make sure that decoder and dataAttributes are set before currentResults
+        if (results.getData() instanceof EncodedQueryData) {
+            EncodedQueryData encodedData = (EncodedQueryData) results.getData();
+            DataAttributes queryAttributed = encodedData.getMetadata();
+            if (decoder.get() == null) {
+                verify(QueryDataDecoders.exists(encodedData.getEncoding()), "Received encoded data format but there is no decoder matching %s", encodedData.getEncoding());
+                QueryDataDecoder queryDataDecoder = QueryDataDecoders
+                        .get(encodedData.getEncoding())
+                        .create(results.getColumns(), queryAttributed);
+                decoder.set(queryDataDecoder);
+            }
+
+            verify(decoder.get().encoding().equals(encodedData.getEncoding()), "Decoder has wrong encoding id, expected %s, got %s", encodedData.getEncoding(), decoder.get().encoding());
         }
 
         currentResults.set(results);
