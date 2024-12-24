@@ -20,6 +20,6 @@ public class SaphanaPlugin
 {
     public SaphanaPlugin()
     {
-        super("saphana", new SaphanaClientModule());
+        super("saphana", SaphanaClientModule::new);
     }
 }
