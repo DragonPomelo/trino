@@ -236,13 +236,7 @@ public class SaphanaClient
         }
 
         if (type instanceof VarcharType varcharType) {
-            String dataType;
-            if (varcharType.isUnbounded() || varcharType.getBoundedLength() > SAP_HANA_VARCHAR_MAX_LENGTH) {
-                dataType = "nclob";
-            }
-            else {
-                dataType = "nvarchar(" + varcharType.getBoundedLength() + ")";
-            }
+            String dataType = "varchar(" + (varcharType.isUnbounded() ? SAP_HANA_VARCHAR_MAX_LENGTH : varcharType.getBoundedLength()) + ")";
 
             return WriteMapping.sliceMapping(dataType, varcharWriteFunction());
         }
