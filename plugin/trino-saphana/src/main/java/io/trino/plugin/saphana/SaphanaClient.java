@@ -146,7 +146,7 @@ public class SaphanaClient
             case Types.BOOLEAN -> {
                 return Optional.of(booleanColumnMapping());
             }
-            case Types.DECIMAL: {
+            case Types.DECIMAL -> {
                 if (typeHandle.decimalDigits().isPresent() && typeHandle.columnSize().isPresent()) {
                     int decimalDigits = typeHandle.requiredDecimalDigits();
                     int precision = typeHandle.requiredColumnSize() + Math.max(-decimalDigits, 0);
